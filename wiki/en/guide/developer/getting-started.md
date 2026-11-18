@@ -12,7 +12,7 @@
 ## Install and run
 
 ```powershell
-git clone <repository> HyperShell
+git clone https://github.com/watersupis/HyperShell.git HyperShell
 cd HyperShell
 pnpm install
 pnpm --filter @hypershell/desktop dev

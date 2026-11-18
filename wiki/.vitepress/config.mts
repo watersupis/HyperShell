@@ -8,6 +8,7 @@ const zhSidebar = [
     { text: '功能与插件目录', link: '/guide/user/features' },
     { text: '设置与数据', link: '/guide/user/settings' },
     { text: '故障排查', link: '/guide/user/troubleshooting' },
+    { text: '版本更新记录', link: '/guide/user/releases' },
   ] },
   { text: '开发者指南', items: [
     { text: '开发者指南总览', link: '/guide/developer/' },
@@ -32,6 +33,7 @@ const enSidebar = [
     { text: 'Features and Plugins', link: '/en/guide/user/features' },
     { text: 'Settings and Data', link: '/en/guide/user/settings' },
     { text: 'Troubleshooting', link: '/en/guide/user/troubleshooting' },
+    { text: 'Release Notes', link: '/en/guide/user/releases' },
   ] },
   { text: 'Developer Guide', items: [
     { text: 'Developer Guide Overview', link: '/en/guide/developer/' },
@@ -62,7 +64,8 @@ export default defineConfig({
         nav: [
           { text: '用户指南', link: '/guide/user/' },
           { text: '开发者指南', link: '/guide/developer/' },
-          { text: '项目仓库', link: 'https://github.com/tomertec/HyperShell' },
+          { text: '版本更新', link: '/guide/user/releases' },
+          { text: '项目仓库', link: 'https://github.com/watersupis/HyperShell' },
         ],
         sidebar: zhSidebar,
         outline: { label: '本页目录', level: [2, 3] },
@@ -78,7 +81,8 @@ export default defineConfig({
         nav: [
           { text: 'User Guide', link: '/en/guide/user/' },
           { text: 'Developer Guide', link: '/en/guide/developer/' },
-          { text: 'Repository', link: 'https://github.com/tomertec/HyperShell' },
+          { text: 'Release Notes', link: '/en/guide/user/releases' },
+          { text: 'Repository', link: 'https://github.com/watersupis/HyperShell' },
         ],
         sidebar: enSidebar,
         outline: { label: 'On this page', level: [2, 3] },
@@ -88,7 +92,7 @@ export default defineConfig({
   },
   themeConfig: {
     logo: '/logo.svg',
-    socialLinks: [{ icon: 'github', link: 'https://github.com/tomertec/HyperShell' }],
+    socialLinks: [{ icon: 'github', link: 'https://github.com/watersupis/HyperShell' }],
     search: {
       provider: 'local',
       options: {
