@@ -56,9 +56,11 @@ test("optional plugin controls have accessible names", async ({ page }) => {
       { id: "tunnels", enabled: false, kind: "optional" },
     ],
   });
-  const dialog = await openSettings(page);
-  await dialog.getByRole("button", { name: "Plugins" }).evaluate((button) => (button as HTMLButtonElement).click());
-  await expect(dialog.getByText("Installed Plugins")).toBeVisible();
+  await page.goto("/");
+  await page.getByRole("button", { name: "Plugin Manager" }).click();
+  const dialog = page.getByRole("dialog", { name: "Plugin Manager" });
+  await expect(dialog).toBeVisible();
+  await dialog.locator('details[aria-label="Built-in Plugins"] summary').click();
   const localTerminalToggle = dialog.getByRole("checkbox", { name: "Local Terminal: Enabled" });
   await expect(localTerminalToggle).toBeVisible();
   await expect(localTerminalToggle).toHaveAttribute("aria-label", "Local Terminal: Enabled");

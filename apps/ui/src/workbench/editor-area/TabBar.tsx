@@ -488,12 +488,12 @@ export function TabBar({
                 />
               );
             })}
-            {launcherContent}
           </div>
         </SortableContext>
         {overflow.right && (
           <ScrollChevron direction="right" label={t("Scroll tabs right")} onClick={() => scrollByPage(1)} />
         )}
+        {launcherContent}
         {rightContent}
       </div>
       {colorMenu && (
