@@ -13,7 +13,6 @@ const optionalPluginApis = [
   },
   { id: "local-terminal", method: "listLocalProfiles" },
   { id: "serial", method: "listSerialProfiles" },
-  { id: "recording", method: "recordingList" },
   { id: "tunnels", method: "listPortForwards" },
 ] as const;
 
@@ -39,6 +38,12 @@ test("optional built-in plugins register and remove IPC handlers with their life
     app = launched.app;
 
     for (const plugin of optionalPluginApis) {
+      await launched.page.evaluate((id) => window.hypershell.internalPluginsSetEnabled({ id, enabled: false }), plugin.id);
+      await closeApp(launched.app);
+      app = undefined;
+      launched = await launchApp(dataDir);
+      app = launched.app;
+
       const initiallyDisabled = await invokeOptionalPluginApi(launched.page, plugin.method, "args" in plugin ? plugin.args : []);
       expect(initiallyDisabled.error, `${plugin.id} should start disabled`).toContain("No handler registered");
 

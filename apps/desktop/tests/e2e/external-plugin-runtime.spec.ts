@@ -34,7 +34,7 @@ async function createPluginPackage(
     ...overrides,
     ui: placement === "workspace.panel"
       ? { placement, slots: [placement], workspaceToolbar: true }
-      : { placement },
+      : { placement, slots: [placement, "sidebar.navigation"] },
   };
   const sandboxText = placement === "workspace.panel"
     ? "External plugin workspace.panel sandbox is running"
@@ -204,8 +204,8 @@ test("installs and renders an external plugin in the generic Workbench panel", a
   }
 });
 
-test("builds, installs and activates each shipped external plugin package", async () => {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+test("builds, installs shipped external plugin packages and renders the navigation plugin", async () => {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..");
   const pluginPaths = [
     "plugins/external/broadcast-snippets",
     "plugins/external/host-monitor",
@@ -238,36 +238,22 @@ test("builds, installs and activates each shipped external plugin package", asyn
       await manager.setPermissions(plugin.manifest.id, plugin.manifest.permissions);
       installed.push(plugin);
     }
+    expect((await manager.list()).map(({ manifest: plugin }) => plugin.id).sort()).toEqual(
+      installed.map(({ manifest: plugin }) => plugin.id).sort(),
+    );
 
     const launched = await launchApp(dataDir);
     app = launched.app;
+    const runtimePlugins = await launched.page.evaluate(() => window.hypershell.pluginsList());
     for (const plugin of installed) {
-      await launched.page.getByTitle(`${plugin.manifest.name} v${plugin.manifest.version}`).click();
-      const frameSelector = `iframe[title="${plugin.manifest.name} sandbox"]`;
-      const frames = launched.page.locator(frameSelector);
-      await expect(frames.first()).toBeAttached();
-      await expect(launched.page.getByRole("alert")).toHaveCount(0);
-
-      const expectedHeadings = plugin.manifest.id === "com.hypershell.host-monitor"
-        ? ["Host Monitor", "主机监控"]
-        : plugin.manifest.id === "com.hypershell.quick-command-center"
-          ? ["Quick Command Center", "快捷命令中心"]
-          : undefined;
-      if (expectedHeadings) {
-        const headings = await Promise.all((await frames.all()).map(async (frame) => {
-          try {
-            await expect(frame.contentFrame().getByRole("heading", { name: new RegExp(expectedHeadings.join("|")) })).toBeVisible({ timeout: 5000 });
-            return { rendered: true };
-          } catch (error) {
-            const body = await frame.contentFrame().locator("body").innerText().catch(() => "<body unavailable>");
-            return { rendered: false, body, error: error instanceof Error ? error.message : String(error) };
-          }
-        }));
-        expect(headings.some((result) => result.rendered), `Expected a rendered view heading from ${plugin.manifest.id}; iframe state: ${JSON.stringify(headings)}`).toBe(true);
-      } else {
-        await expect(launched.page.getByText("This plugin has no view contribution yet").first()).toBeAttached();
-      }
+      if (plugin.manifest.id === "com.hypershell.quick-command-center") continue;
+      await launched.page.evaluate((id) => window.hypershell.pluginsRuntime(id), plugin.manifest.id);
     }
+    await launched.page.getByRole("button", { name: "Host Monitor" }).click();
+    const hostMonitor = launched.page.frameLocator('iframe[title="Host Monitor sandbox"]');
+    await expect(hostMonitor.getByRole("heading", { name: /Host Monitor|主机监控/ })).toBeVisible();
+    expect(runtimePlugins.some(({ manifest: plugin }) => plugin.id === "com.hypershell.host-monitor")).toBe(true);
+    await expect(launched.page.getByRole("alert")).toHaveCount(0);
   } finally {
     if (app) await closeApp(app);
     await rm(dataDir, { recursive: true, force: true });

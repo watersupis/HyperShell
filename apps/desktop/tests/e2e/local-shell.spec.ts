@@ -125,7 +125,8 @@ test.describe("local shell profiles", () => {
       });
     });
 
-    await launched.page.getByRole("complementary").getByRole("button", { name: "Command Prompt" }).click();
+    await launched.page.getByRole("complementary").getByRole("button", { name: "Command Prompt" }).dblclick();
+    await expect(launched.page.locator(".xterm-screen")).toBeVisible();
     await launched.page.locator(".xterm-screen").click();
     await expect.poll(() => launched.page.evaluate(() => (window as Window & { __terminalOutput?: string }).__terminalOutput)).toContain("cmd.exe");
     await launched.page.keyboard.type("echo hypershell-keyboard-ok");
