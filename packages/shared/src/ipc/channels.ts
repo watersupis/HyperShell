@@ -85,39 +85,6 @@ export const hostEnvVarChannels = {
   replace: "host-env-vars:replace",
 } as const;
 
-export const sftpChannels = {
-  connect: "sftp:connect",
-  disconnect: "sftp:disconnect",
-  list: "sftp:list",
-  stat: "sftp:stat",
-  chmod: "sftp:chmod",
-  mkdir: "sftp:mkdir",
-  rename: "sftp:rename",
-  delete: "sftp:delete",
-  readFile: "sftp:read-file",
-  writeFile: "sftp:write-file",
-  transferStart: "sftp:transfer:start",
-  transferCancel: "sftp:transfer:cancel",
-  transferPause: "sftp:transfer:pause",
-  transferResume: "sftp:transfer:resume",
-  transferRetry: "sftp:transfer:retry",
-  transferList: "sftp:transfer:list",
-  transferResolveConflict: "sftp:transfer:resolve-conflict",
-  event: "sftp:event",
-  keyboardInteractive: "sftp:keyboard-interactive",
-  keyboardInteractiveResponse: "sftp:keyboard-interactive-response",
-  bookmarksList: "sftp:bookmarks:list",
-  bookmarksUpsert: "sftp:bookmarks:upsert",
-  bookmarksRemove: "sftp:bookmarks:remove",
-  bookmarksReorder: "sftp:bookmarks:reorder",
-  syncStart: "sftp:sync:start",
-  syncStop: "sftp:sync:stop",
-  syncList: "sftp:sync:list",
-  syncEvent: "sftp:sync:event",
-  dragOut: "sftp:drag-out",
-  startNativeDragOut: "sftp:drag-out:start-native",
-} as const;
-
 export const workspaceChannels = {
   save: "workspace:save",
   load: "workspace:load",
@@ -147,6 +114,7 @@ export const fsChannels = {
   showInFolder: "fs:show-in-folder",
   trash: "fs:trash",
   rename: "fs:rename",
+  copy: "fs:copy",
 } as const;
 
 export const hostPortForwardChannels = {
@@ -176,10 +144,23 @@ export const editorChannels = {
   sessionClosed: "editor:session-closed",
 } as const;
 
-export const snippetChannels = {
-  list: "snippets:list",
-  upsert: "snippets:upsert",
-  remove: "snippets:remove",
+export const pluginChannels = {
+  list: "plugins:list",
+  install: "plugins:install",
+  installSelected: "plugins:install-selected",
+  cancelInstall: "plugins:cancel-install",
+  update: "plugins:update",
+  restart: "plugins:restart",
+  setPermissions: "plugins:set-permissions",
+  uninstall: "plugins:uninstall",
+  runtime: "plugins:runtime",
+  invoke: "plugins:invoke",
+} as const;
+
+export const internalPluginChannels = {
+  list: "internal-plugins:list",
+  setEnabled: "internal-plugins:set-enabled",
+  invoke: "internal-plugins:invoke",
 } as const;
 
 export const loggingChannels = {
@@ -198,11 +179,6 @@ export const recordingChannels = {
   export: "recording:export",
 } as const;
 
-export const connectionHistoryChannels = {
-  listByHost: "connection-history:list-by-host",
-  listRecent: "connection-history:list-recent",
-} as const;
-
 export const hostFingerprintChannels = {
   lookup: "host-fingerprint:lookup",
   trust: "host-fingerprint:trust",
@@ -218,10 +194,6 @@ export const backupChannels = {
 
 export const tmuxChannels = {
   probe: "tmux:probe",
-} as const;
-
-export const claudeChannels = {
-  sessionInfo: "claude:session-info",
 } as const;
 
 export const appChannels = {
@@ -249,7 +221,6 @@ export const ipcChannels = {
   localProfiles: localProfileChannels,
   hostProfiles: hostProfileChannels,
   hostEnvVars: hostEnvVarChannels,
-  sftp: sftpChannels,
   workspace: workspaceChannels,
   fs: fsChannels,
   sshKeys: sshKeyChannels,
@@ -258,14 +229,13 @@ export const ipcChannels = {
   network: networkChannels,
   op: opChannels,
   editor: editorChannels,
-  snippets: snippetChannels,
+  plugins: pluginChannels,
+  internalPlugins: internalPluginChannels,
   logging: loggingChannels,
   recording: recordingChannels,
-  connectionHistory: connectionHistoryChannels,
   hostFingerprint: hostFingerprintChannels,
   backup: backupChannels,
   tmux: tmuxChannels,
-  claude: claudeChannels,
   app: appChannels,
   update: updateChannels,
 } as const;

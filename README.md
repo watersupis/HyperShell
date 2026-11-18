@@ -7,168 +7,55 @@
 </p>
 
 <p align="center">
-  A desktop SSH and serial terminal with an integrated SFTP file browser.<br>
-  Built with Electron, React, and xterm.js.
+  面向 SSH 运维的桌面终端工作台，支持标签页、分屏和插件扩展。<br>
+  基于 Electron、React、TypeScript 与 xterm.js 构建。
 </p>
 
 ![Windows](https://img.shields.io/badge/Windows-10%2F11-0078D4?logo=windows)
 ![macOS](https://img.shields.io/badge/macOS-12%2B-000000?logo=apple)
 ![Linux](https://img.shields.io/badge/Linux-x64-FCC624?logo=linux&logoColor=black)
-![Electron](https://img.shields.io/badge/Electron-34-47848F?logo=electron)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript)
+![Electron](https://img.shields.io/badge/Electron-39-47848F?logo=electron)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ---
 
-<p align="center">
-  <img src="docs/screenshots/1.png" alt="Welcome screen" width="49%">
-  <img src="docs/screenshots/2.png" alt="SSH quick connect" width="49%">
-</p>
-<p align="center">
-  <img src="docs/screenshots/4.png" alt="Terminal session with status bar" width="49%">
-  <img src="docs/screenshots/3.png" alt="Serial port connect" width="49%">
-</p>
+## 功能概览
 
----
+- SSH 终端、主机管理、SSH 配置导入和标签页/分屏工作区。
+- SFTP 双窗格文件浏览、传输、同步、书签、操作日志和远程编辑（可选内置插件）。
+- 本地终端、串口、会话录制和 SSH 隧道（可选内置插件）。
+- 外置插件安装、权限管理和隔离视图；内置与外置功能都通过插件贡献接入工作台。
 
-## Features
+插件的实际完成度、可用插槽和限制见 [Wiki 功能与插件目录](wiki/guide/user/features.md)。
 
-**Terminal**
-- SSH connections via system `ssh` binary (full agent/config/proxy support)
-- Serial port terminal with configurable baud, parity, and flow control
-- Tabs, split panes, and broadcast mode (send to multiple sessions)
-- Terminal search, session logging, and keyboard shortcuts
+## 快速启动
 
-**SFTP File Browser**
-- Dual-pane commander-style file browser with transfer queue
-- Remote file editing in a dedicated CodeMirror editor window
-- Bookmarks, sync engine, and recursive folder transfers
-- Keyboard navigation with vim-style and F-key bindings
+开发环境需要 Node.js 22+、pnpm 10.8+，Windows 原生依赖通常还需要 Visual Studio Build Tools。
 
-**Host Management**
-- Host CRUD with groups, color tags, and drag-and-drop reorder
-- SSH config import from `~/.ssh/config`
-- PuTTY session import from Windows registry
-- 1Password credential references
-- Per-host jump host (ProxyJump), keep-alive, and auto-reconnect settings
-
-**Port Forwarding**
-- Standalone and host-linked local/remote/dynamic tunnels
-- Visual Tunnel Manager with topology diagram
-
-**Networking**
-- SSH2 connection pool with ref counting and idle timeout
-- Network-aware auto-reconnect with DNS probing
-- Host key verification for SFTP connections
-- Keyboard-interactive authentication (2FA)
-
-**Extras**
-- Snippets manager with send-to-terminal
-- Session recovery and workspace save/restore
-- Database backup and restore with auto-backup on startup
-- System tray integration
-- Host status monitoring
-
-## Quick Start
-
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) 22+
-- [pnpm](https://pnpm.io/) 10.8+
-- Windows: Visual Studio Build Tools (for native modules)
-- macOS: Xcode Command Line Tools
-- Linux: `build-essential`, `python3` (for native modules)
-
-### Install and Run
-
-```bash
-git clone https://github.com/tomertec/HyperShell.git
-cd hypershell
+```powershell
 pnpm install
-pnpm build
 pnpm --filter @hypershell/desktop dev
 ```
 
-The app opens an Electron window. The renderer runs on Vite HMR (port 5173) during development.
+`desktop dev` 会依次构建 UI、Electron 主进程并同步渲染器资源，然后启动 Electron；不是独立的 Vite HMR 双进程模式。完整步骤、原生模块处理和排错见 [Wiki 开发者指南](wiki/guide/developer/getting-started.md)。
 
-## Architecture
+## 文档
 
-```
-+--------------------------------------------------+
-|                   Electron Shell                  |
-|                                                   |
-|  +--------------------+  +---------------------+ |
-|  |   Main Process     |  |    Renderer (React)  | |
-|  |                    |  |                      | |
-|  |  SessionManager    |  |  Zustand Stores      | |
-|  |   SSH PTY ---------|--|-> TerminalPane       | |
-|  |   Serial    -------|--|-> TerminalPane       | |
-|  |   SFTP      -------|--|-> SftpDualPane       | |
-|  |                    |  |                      | |
-|  |  SQLite DB         |  |  TabBar / Panes     | |
-|  |  Host Monitor      |  |  Quick Connect      | |
-|  |  Tray Integration  |  |  Settings Panel     | |
-|  +--------+-----------+  +----------+----------+ |
-|           |       Preload (Zod IPC)  |            |
-|           +-------<window.hypershell>+            |
-+--------------------------------------------------+
+从 [HyperShell Wiki](wiki/index.md) 进入用户指南与开发者指南。Wiki 本地预览：`pnpm wiki:dev`；生产构建与预览：`pnpm wiki:build`、`pnpm wiki:preview`。开发参考和历史决策摘要也已纳入 Wiki。
+
+## 常用命令
+
+```powershell
+pnpm build
+pnpm test
+pnpm lint
+pnpm --filter @hypershell/ui run test:e2e
+pnpm --filter @hypershell/desktop run test:e2e
 ```
 
-Three-layer Electron model with Zod-validated IPC at the preload boundary. Five pnpm workspaces:
+Windows 本地目录构建和安装包命令见 [Wiki 构建、测试与打包](wiki/guide/developer/build-test.md)。
 
-| Workspace | Package | Role |
-|-----------|---------|------|
-| `apps/desktop` | `@hypershell/desktop` | Electron main process, preload bridge, IPC handlers |
-| `apps/ui` | `@hypershell/ui` | React renderer — terminals, SFTP, host browser, settings |
-| `packages/shared` | `@hypershell/shared` | IPC channel names and Zod request/response schemas |
-| `packages/session-core` | `@hypershell/session-core` | Transport abstraction (SSH, serial, SFTP), connection pool |
-| `packages/db` | `@hypershell/db` | SQLite database, migrations, repositories |
-
-## Build Commands
-
-```bash
-pnpm build                    # Build all workspaces
-pnpm test                     # Run all Vitest unit tests
-pnpm lint                     # Lint all workspaces
-
-# E2E tests (Playwright)
-pnpm --filter @hypershell/ui test:e2e
-
-# Windows installer
-pnpm release:windows:unsigned
-
-# macOS DMG
-pnpm release:mac:unsigned
-
-# Linux AppImage + deb
-pnpm release:linux:unsigned
-```
-
-## Tech Stack
-
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| Desktop framework | Electron | 34.0.0 |
-| UI framework | React | 19.1.0 |
-| Terminal emulator | xterm.js | 6.0.0 |
-| Language | TypeScript (strict) | 5.8.3 |
-| SSH/SFTP client | ssh2 | 1.17.0 |
-| Serial I/O | serialport | 12.0.0 |
-| Database | SQLite (better-sqlite3) | 11.8.0 |
-| State management | Zustand | 5.0.8 |
-| Schema validation | Zod | 3.24.1 |
-| Styling | Tailwind CSS | 4.2.2 |
-| Code editor | CodeMirror | 6.0.2 |
-| Bundler (UI) | Vite | 6.3.5 |
-| Bundler (main) | esbuild | 0.25.12 |
-| Unit tests | Vitest | 3.1.2 |
-| E2E tests | Playwright | 1.54.1 |
-| Packaging | electron-builder | 26.0.12 |
-
-## Documentation
-
-Full developer documentation is in the [`docs/`](docs/INDEX.md) directory, covering architecture, IPC reference, data model, configuration, testing, build and release, and troubleshooting.
-
-## License
+## 许可证
 
 MIT

@@ -5,7 +5,7 @@ import { defineConfig } from "@playwright/test";
 // preload bridge, Zod-validated IPC, native modules, SQLite on disk, windows —
 // which Chromium against the Vite dev server cannot exercise at all.
 export default defineConfig({
-  testDir: "./tests",
+  testDir: "./tests/e2e",
   // App launch plus a bundled-renderer first paint is a few seconds on cold CI.
   timeout: 120_000,
   expect: {

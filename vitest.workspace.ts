@@ -2,5 +2,6 @@ import { defineWorkspace } from "vitest/config";
 
 export default defineWorkspace([
   "apps/*",
-  "packages/*"
+  "packages/*",
+  "plugins/external/broadcast-snippets"
 ]);

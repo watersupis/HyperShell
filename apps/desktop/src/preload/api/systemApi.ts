@@ -21,18 +21,8 @@ import {
   type EditorOpenRequest,
   type EditorOpenFile,
   type EditorSessionClosed,
-  snippetRecordSchema,
-  upsertSnippetRequestSchema,
-  removeSnippetRequestSchema,
   tmuxProbeRequestSchema,
   tmuxProbeResponseSchema,
-  claudeSessionInfoRequestSchema,
-  claudeSessionInfoResponseSchema,
-  type ClaudeSessionInfoRequest,
-  type ClaudeSessionInfoResponse,
-  type SnippetRecord,
-  type UpsertSnippetRequest,
-  type RemoveSnippetRequest,
   type TmuxProbeRequest,
   type TmuxProbeResponse,
   type CreateBackupRequest,
@@ -54,10 +44,6 @@ export interface SystemApi {
   editorOpen(request: EditorOpenRequest): Promise<void>;
   onEditorOpenFile(listener: (event: EditorOpenFile) => void): () => void;
   onEditorSessionClosed(listener: (event: EditorSessionClosed) => void): () => void;
-  // Snippets
-  snippetsList(): Promise<SnippetRecord[]>;
-  snippetsUpsert(request: UpsertSnippetRequest): Promise<SnippetRecord>;
-  snippetsRemove(request: RemoveSnippetRequest): Promise<void>;
   // Database backup & restore
   backupCreate(request: CreateBackupRequest): Promise<CreateBackupResponse>;
   backupRestore(request: RestoreBackupRequest): Promise<RestoreBackupResponse>;
@@ -65,8 +51,6 @@ export interface SystemApi {
   backupShowOpenDialog(): Promise<string | null>;
   // Tmux detection
   tmuxProbe(request: TmuxProbeRequest): Promise<TmuxProbeResponse>;
-  // Claude Code session lookup
-  claudeSessionInfo(request: ClaudeSessionInfoRequest): Promise<ClaudeSessionInfoResponse>;
   // App theme
   setAppTheme(theme: "light" | "dark"): Promise<void>;
 }
@@ -112,18 +96,6 @@ export function createSystemApi(
       "editor session-closed",
       editorSessionClosedSchema
     ),
-    // Snippets
-    async snippetsList(): Promise<SnippetRecord[]> {
-      const raw = await ipcRenderer.invoke(ipcChannels.snippets.list);
-      return z.array(snippetRecordSchema).parse(raw);
-    },
-    async snippetsUpsert(request: UpsertSnippetRequest): Promise<SnippetRecord> {
-      const raw = await ipcRenderer.invoke(ipcChannels.snippets.upsert, upsertSnippetRequestSchema.parse(request));
-      return snippetRecordSchema.parse(raw);
-    },
-    async snippetsRemove(request: RemoveSnippetRequest): Promise<void> {
-      await ipcRenderer.invoke(ipcChannels.snippets.remove, removeSnippetRequestSchema.parse(request));
-    },
     // Database backup & restore
     async backupCreate(request: CreateBackupRequest): Promise<CreateBackupResponse> {
       const parsed = createBackupRequestSchema.parse(request);
@@ -149,14 +121,6 @@ export function createSystemApi(
       const parsed = tmuxProbeRequestSchema.parse(request);
       const raw = await ipcRenderer.invoke(ipcChannels.tmux.probe, parsed);
       return tmuxProbeResponseSchema.parse(raw);
-    },
-    // Claude Code session lookup
-    async claudeSessionInfo(
-      request: ClaudeSessionInfoRequest
-    ): Promise<ClaudeSessionInfoResponse> {
-      const parsed = claudeSessionInfoRequestSchema.parse(request);
-      const raw = await ipcRenderer.invoke(ipcChannels.claude.sessionInfo, parsed);
-      return claudeSessionInfoResponseSchema.parse(raw);
     },
     // App theme
     async setAppTheme(theme: "light" | "dark"): Promise<void> {

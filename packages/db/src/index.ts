@@ -137,28 +137,36 @@ export function openDatabase(databasePath = ":memory:"): SqliteDatabase {
   // Migration 018: Claude session resume columns.
   execGuardedStatements(db, readMigration("018_claude_sessions.sql"));
 
+  // Migration 019: persistent SFTP operation history.
+  execGuardedStatements(db, readMigration("019_sftp_operation_logs.sql"));
+
+  // Migration 020: opaque plugin-owned saved-session metadata.
+  execGuardedStatements(db, readMigration("020_saved_session_plugin_data.sql"));
+
+  // Migration 021: generic plugin-owned persistent data.
+  execGuardedStatements(db, readMigration("021_plugin_storage.sql"));
+
+  // Migration 022: preserve each recording's actual location when the configured folder changes.
+  execGuardedStatements(db, readMigration("022_session_recording_file_path.sql"));
+  const hasLegacySnippets = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'snippets'"
+  ).get();
+  if (hasLegacySnippets) {
+    db.transaction(() => {
+      db.exec(`
+        INSERT OR IGNORE INTO plugin_storage (plugin_id, collection, key, value_json)
+          SELECT '__legacy__', 'hypershell.command-snippets.v1', id,
+          json_object('id', id, 'name', name, 'body', body)
+        FROM snippets
+      `);
+      db.exec("DROP TABLE snippets");
+    })();
+  }
+
   return db;
 }
 
 export * from "./repositories";
-export type { SnippetRecord, SnippetInput } from "./repositories/snippetsRepository";
-export { createSnippetsRepository, createSnippetsRepositoryFromDatabase } from "./repositories/snippetsRepository";
-export type { HostFingerprintRecord, HostFingerprintInput } from "./repositories/hostFingerprintRepository";
-export { createHostFingerprintRepository, createHostFingerprintRepositoryFromDatabase } from "./repositories/hostFingerprintRepository";
-export type {
-  SessionRecordingRecord,
-  SessionRecordingInput,
-  CompleteSessionRecordingInput
-} from "./repositories/sessionRecordingRepository";
-export {
-  createSessionRecordingRepository,
-  createSessionRecordingRepositoryFromDatabase
-} from "./repositories/sessionRecordingRepository";
-export type { ConnectionHistoryRecord } from "./repositories/connectionHistoryRepository";
-export {
-  createConnectionHistoryRepository,
-  createConnectionHistoryRepositoryFromDatabase
-} from "./repositories/connectionHistoryRepository";
 export type {
   SavedSessionRecord,
   SavedSessionInput,
@@ -168,26 +176,3 @@ export {
   createSavedSessionRepository,
   createSavedSessionRepositoryFromDatabase
 } from "./repositories/savedSessionRepository";
-export type {
-  HostProfileRecord,
-  HostProfileInput
-} from "./repositories/hostProfileRepository";
-export {
-  createHostProfileRepository,
-  createHostProfileRepositoryFromDatabase
-} from "./repositories/hostProfileRepository";
-export type {
-  HostEnvVarRecord,
-  HostEnvVarInput
-} from "./repositories/hostEnvVarRepository";
-export {
-  createHostEnvVarRepositoryFromDatabase
-} from "./repositories/hostEnvVarRepository";
-export type {
-  TagRecord,
-  TagInput
-} from "./repositories/tagRepository";
-export {
-  createTagRepository,
-  createTagRepositoryFromDatabase
-} from "./repositories/tagRepository";

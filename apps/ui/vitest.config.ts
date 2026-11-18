@@ -9,10 +9,11 @@ export default defineConfig({
     // `// @vitest-environment node` pragma.
     environment: "jsdom",
     include: [
-      "src/**/*.test.ts",
-      "src/**/*.test.tsx"
+      "tests/unit/**/*.test.ts",
+      "tests/unit/**/*.test.tsx",
+      "../../plugins/builtin/*/tests/unit/ui/**/*.test.ts",
+      "../../plugins/builtin/*/tests/unit/ui/**/*.test.tsx"
     ],
-    exclude: ["tests/**"],
     setupFiles: ["./vitest.setup.ts"]
   }
 });

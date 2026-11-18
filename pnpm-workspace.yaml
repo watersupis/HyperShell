@@ -1,3 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - plugins/builtin
+  - plugins/builtin/*
+  - plugins/external/*
+  - plugins/templates/*

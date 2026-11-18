@@ -1,0 +1,26 @@
+{
+  "name": "@hypershell/builtin-runtime",
+  "private": true,
+  "version": "0.3.1",
+  "type": "module",
+  "main": "./runtime.ts",
+  "types": "./runtime.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit"
+  },
+  "exports": {
+    ".": "./runtime.ts"
+  },
+  "dependencies": {
+    "@hypershell/builtin-local-terminal": "workspace:*",
+    "@hypershell/builtin-quick-command-center": "workspace:*",
+    "@hypershell/builtin-serial": "workspace:*",
+    "@hypershell/builtin-session-recording": "workspace:*",
+    "@hypershell/builtin-sftp": "workspace:*",
+    "@hypershell/builtin-ssh": "workspace:*",
+    "@hypershell/builtin-tunnels": "workspace:*",
+    "@hypershell/db": "workspace:*",
+    "@hypershell/plugin-api": "workspace:*",
+    "@hypershell/session-core": "workspace:*"
+  }
+}

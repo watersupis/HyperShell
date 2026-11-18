@@ -5,12 +5,15 @@
   "packageManager": "pnpm@10.8.1",
   "workspaces": [
     "apps/*",
-    "packages/*"
+    "packages/*",
+    "plugins/builtin/*",
+    "plugins/external/*",
+    "plugins/templates/*"
   ],
   "scripts": {
     "build": "pnpm -r --if-present build",
     "test": "vitest run",
-    "lint": "eslint .",
+    "lint": "node .tools/plugins/check-boundaries.mjs && node --test .tools/plugins/check-boundaries.test.mjs && eslint .",
     "ci:build": "pnpm build",
     "ci:lint": "pnpm lint",
     "ci:test": "pnpm test",
@@ -22,6 +25,10 @@
     "release:manifest": "pnpm --filter @hypershell/desktop run release:manifest",
     "release:prepare": "node .tools/release/prepare-version-and-changelog.mjs",
     "release:verify-tag": "node .tools/release/verify-tag-version.mjs",
+    "wiki:dev": "vitepress dev wiki",
+    "wiki:build": "vitepress build wiki",
+    "wiki:preview": "vitepress preview wiki",
+    "plugin:pack": "node .tools/plugins/pack.mjs",
     "rebuild:sqlite": "pnpm rebuild better-sqlite3",
     "rebuild:sqlite:electron": "pnpm --filter @hypershell/desktop run rebuild:native"
   },
@@ -44,12 +51,15 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.2",
+    "esbuild": "^0.25.12",
     "eslint": "^10.8.0",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.8.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.65.0",
-    "vitest": "^3.2.6"
+    "vitepress": "1.6.4",
+    "vitest": "^3.2.6",
+    "yazl": "^3.3.1"
   }
 }

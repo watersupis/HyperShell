@@ -12,7 +12,7 @@ export type SavedSessionRecord = {
   title: string;
   wasGraceful: boolean;
   savedAt: string;
-  claudeSessionId: string | null;
+  pluginData: Record<string, unknown>;
 };
 
 export type SavedSessionInput = {
@@ -21,7 +21,7 @@ export type SavedSessionInput = {
   transport: SavedSessionTransport;
   profileId: string;
   title: string;
-  claudeSessionId?: string | null;
+  pluginData?: Record<string, unknown>;
 };
 
 type SavedSessionRow = {
@@ -33,8 +33,19 @@ type SavedSessionRow = {
   title: string;
   was_graceful: number;
   saved_at: string;
-  claude_session_id: string | null;
+  plugin_data_json: string;
 };
+
+function parsePluginData(value: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 function mapRow(row: SavedSessionRow): SavedSessionRecord {
   return {
@@ -46,7 +57,7 @@ function mapRow(row: SavedSessionRow): SavedSessionRecord {
     title: row.title,
     wasGraceful: row.was_graceful === 1,
     savedAt: row.saved_at,
-    claudeSessionId: row.claude_session_id,
+    pluginData: parsePluginData(row.plugin_data_json),
   };
 }
 
@@ -66,7 +77,7 @@ export function createSavedSessionRepositoryFromDatabase(db: SqliteDatabase) {
       title,
       was_graceful,
       saved_at,
-      claude_session_id
+      plugin_data_json
     ) VALUES (
       @id,
       @hostId,
@@ -75,7 +86,7 @@ export function createSavedSessionRepositoryFromDatabase(db: SqliteDatabase) {
       @title,
       0,
       @savedAt,
-      @claudeSessionId
+      @pluginDataJson
     )
   `);
 
@@ -88,7 +99,7 @@ export function createSavedSessionRepositoryFromDatabase(db: SqliteDatabase) {
            ss.title,
            ss.was_graceful,
            ss.saved_at,
-           ss.claude_session_id
+           ss.plugin_data_json
     FROM saved_sessions ss
     LEFT JOIN hosts h ON h.id = ss.host_id
     WHERE ss.was_graceful = 0
@@ -113,7 +124,7 @@ export function createSavedSessionRepositoryFromDatabase(db: SqliteDatabase) {
         profileId: session.profileId,
         title: session.title,
         savedAt,
-        claudeSessionId: session.claudeSessionId ?? null,
+        pluginDataJson: JSON.stringify(session.pluginData ?? {}),
       });
     }
   });

@@ -1,5 +1,5 @@
 import {
-  ipcChannels,
+  sftpIpcChannels,
   sftpBookmarkListRequestSchema,
   sftpBookmarkRemoveRequestSchema,
   sftpBookmarkReorderRequestSchema,
@@ -9,6 +9,13 @@ import {
   sftpConnectResponseSchema,
   sftpChmodRequestSchema,
   sftpDeleteRequestSchema,
+  sftpDeleteWithBackupRequestSchema,
+  sftpDeleteWithBackupResponseSchema,
+  sftpRestoreDeleteBackupRequestSchema,
+  sftpOperationLogsListRequestSchema,
+  sftpOperationLogsListResponseSchema,
+  sftpOperationLogAppendRequestSchema,
+  sftpOperationLogsClearRequestSchema,
   sftpDisconnectRequestSchema,
   sftpEventSchema,
   sftpEntrySchema,
@@ -18,6 +25,7 @@ import {
   sftpReadFileRequestSchema,
   sftpReadFileResponseSchema,
   sftpRenameRequestSchema,
+  sftpCopyRequestSchema,
   sftpStatRequestSchema,
   sftpTransferCancelRequestSchema,
   sftpTransferListResponseSchema,
@@ -47,6 +55,10 @@ import {
   type SftpConnectResponse,
   type SftpChmodRequest,
   type SftpDeleteRequest,
+  type SftpDeleteWithBackupRequest,
+  type SftpDeleteWithBackupResponse,
+  type SftpRestoreDeleteBackupRequest,
+  type SftpOperationLog,
   type SftpDisconnectRequest,
   type SftpEvent,
   type SftpListRequest,
@@ -55,6 +67,7 @@ import {
   type SftpReadFileRequest,
   type SftpReadFileResponse,
   type SftpRenameRequest,
+  type SftpCopyRequest,
   type SftpStatRequest,
   type SftpTransferCancelRequest,
   type SftpTransferListResponse,
@@ -74,7 +87,7 @@ import {
   type SftpDragOutResponse,
   type KeyboardInteractiveRequest,
   type KeyboardInteractiveResponse,
-} from "@hypershell/shared";
+} from "@hypershell/plugin-api";
 import { z } from "zod";
 import { createSubscription } from "./subscription";
 import type { PreloadIpcRenderer, PreloadLogger } from "./types";
@@ -87,7 +100,13 @@ export interface SftpApi {
   sftpChmod(request: SftpChmodRequest): Promise<void>;
   sftpMkdir(request: SftpMkdirRequest): Promise<void>;
   sftpRename(request: SftpRenameRequest): Promise<void>;
+  sftpCopy(request: SftpCopyRequest): Promise<void>;
   sftpDelete(request: SftpDeleteRequest): Promise<void>;
+  sftpDeleteWithBackup(request: SftpDeleteWithBackupRequest): Promise<SftpDeleteWithBackupResponse>;
+  sftpRestoreDeleteBackup(request: SftpRestoreDeleteBackupRequest): Promise<TransferJob[]>;
+  sftpOperationLogsList(request: { hostId: string }): Promise<SftpOperationLog[]>;
+  sftpOperationLogAppend(request: { hostId: string; log: SftpOperationLog }): Promise<void>;
+  sftpOperationLogsClear(request: { hostId: string }): Promise<void>;
   sftpReadFile(request: SftpReadFileRequest): Promise<SftpReadFileResponse>;
   sftpWriteFile(request: SftpWriteFileRequest): Promise<SftpWriteFileResponse>;
   sftpTransferStart(request: SftpTransferStartRequest): Promise<TransferJob[]>;
@@ -264,16 +283,16 @@ export function createSftpApi(
   return {
     async sftpConnect(request: SftpConnectRequest): Promise<SftpConnectResponse> {
       const parsed = sftpConnectRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.connect, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.connect, parsed);
       return sftpConnectResponseSchema.parse(result);
     },
     async sftpDisconnect(request: SftpDisconnectRequest): Promise<void> {
       const parsed = sftpDisconnectRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.disconnect, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.disconnect, parsed);
     },
     async sftpList(request: SftpListRequest): Promise<SftpListResponse> {
       const parsed = sftpListRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.list, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.list, parsed);
       const strict = sftpListResponseSchema.safeParse(result);
       if (strict.success) {
         return strict.data;
@@ -287,7 +306,7 @@ export function createSftpApi(
     },
     async sftpStat(request: SftpStatRequest): Promise<SftpEntry> {
       const parsed = sftpStatRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.stat, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.stat, parsed);
       const strict = sftpEntrySchema.safeParse(result);
       if (strict.success) {
         return strict.data;
@@ -302,129 +321,156 @@ export function createSftpApi(
     },
     async sftpChmod(request: SftpChmodRequest): Promise<void> {
       const parsed = sftpChmodRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.chmod, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.chmod, parsed);
     },
     async sftpMkdir(request: SftpMkdirRequest): Promise<void> {
       const parsed = sftpMkdirRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.mkdir, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.mkdir, parsed);
     },
     async sftpRename(request: SftpRenameRequest): Promise<void> {
       const parsed = sftpRenameRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.rename, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.rename, parsed);
+    },
+    async sftpCopy(request: SftpCopyRequest): Promise<void> {
+      const parsed = sftpCopyRequestSchema.parse(request);
+      await ipcRenderer.invoke(sftpIpcChannels.copy, parsed);
     },
     async sftpDelete(request: SftpDeleteRequest): Promise<void> {
       const parsed = sftpDeleteRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.delete, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.delete, parsed);
+    },
+    async sftpDeleteWithBackup(request: SftpDeleteWithBackupRequest): Promise<SftpDeleteWithBackupResponse> {
+      const parsed = sftpDeleteWithBackupRequestSchema.parse(request);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.deleteWithBackup, parsed);
+      return sftpDeleteWithBackupResponseSchema.parse(result);
+    },
+    async sftpRestoreDeleteBackup(request: SftpRestoreDeleteBackupRequest): Promise<TransferJob[]> {
+      const parsed = sftpRestoreDeleteBackupRequestSchema.parse(request);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.restoreDeleteBackup, parsed);
+      return z.array(transferJobSchema).parse(result);
+    },
+    async sftpOperationLogsList(request: { hostId: string }): Promise<SftpOperationLog[]> {
+      const parsed = sftpOperationLogsListRequestSchema.parse(request);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.operationLogsList, parsed);
+      return sftpOperationLogsListResponseSchema.parse(result).logs;
+    },
+    async sftpOperationLogAppend(request: { hostId: string; log: SftpOperationLog }): Promise<void> {
+      const parsed = sftpOperationLogAppendRequestSchema.parse(request);
+      await ipcRenderer.invoke(sftpIpcChannels.operationLogAppend, parsed);
+    },
+    async sftpOperationLogsClear(request: { hostId: string }): Promise<void> {
+      const parsed = sftpOperationLogsClearRequestSchema.parse(request);
+      await ipcRenderer.invoke(sftpIpcChannels.operationLogsClear, parsed);
     },
     async sftpReadFile(request: SftpReadFileRequest): Promise<SftpReadFileResponse> {
       const parsed = sftpReadFileRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.readFile, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.readFile, parsed);
       return sftpReadFileResponseSchema.parse(result);
     },
     async sftpWriteFile(request: SftpWriteFileRequest): Promise<SftpWriteFileResponse> {
       const parsed = sftpWriteFileRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.writeFile, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.writeFile, parsed);
       return sftpWriteFileResponseSchema.parse(result);
     },
     async sftpTransferStart(request: SftpTransferStartRequest): Promise<TransferJob[]> {
       const parsed = sftpTransferStartRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.transferStart, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.transferStart, parsed);
       return transferJobArraySchema.parse(result);
     },
     async sftpTransferCancel(request: SftpTransferCancelRequest): Promise<void> {
       const parsed = sftpTransferCancelRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.transferCancel, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.transferCancel, parsed);
     },
     async sftpTransferPause(request: SftpTransferPauseRequest): Promise<void> {
       const parsed = sftpTransferPauseRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.transferPause, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.transferPause, parsed);
     },
     async sftpTransferResume(request: SftpTransferResumeRequest): Promise<void> {
       const parsed = sftpTransferResumeRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.transferResume, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.transferResume, parsed);
     },
     async sftpTransferRetry(request: SftpTransferRetryRequest): Promise<TransferJob> {
       const parsed = sftpTransferRetryRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.transferRetry, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.transferRetry, parsed);
       return transferJobSchema.parse(result);
     },
     async sftpTransferList(): Promise<SftpTransferListResponse> {
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.transferList);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.transferList);
       return sftpTransferListResponseSchema.parse(result);
     },
     async sftpTransferResolveConflict(
       request: SftpTransferResolveConflictRequest
     ): Promise<void> {
       const parsed = sftpTransferResolveConflictRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.transferResolveConflict, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.transferResolveConflict, parsed);
     },
     onSftpEvent: createSubscription(
       ipcRenderer,
       logger,
-      ipcChannels.sftp.event,
+      sftpIpcChannels.event,
       "onSftpEvent",
       "SFTP event",
       sftpEventSchema
     ),
     async sftpBookmarksList(request: SftpBookmarkListRequest): Promise<SftpBookmark[]> {
       const parsed = sftpBookmarkListRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.bookmarksList, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.bookmarksList, parsed);
       return sftpBookmarkArraySchema.parse(result);
     },
     async sftpBookmarksUpsert(request: SftpBookmarkUpsertRequest): Promise<SftpBookmark> {
       const parsed = sftpBookmarkUpsertRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.bookmarksUpsert, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.bookmarksUpsert, parsed);
       return sftpBookmarkSchema.parse(result);
     },
     async sftpBookmarksRemove(request: SftpBookmarkRemoveRequest): Promise<void> {
       const parsed = sftpBookmarkRemoveRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.bookmarksRemove, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.bookmarksRemove, parsed);
     },
     async sftpBookmarksReorder(request: SftpBookmarkReorderRequest): Promise<void> {
       const parsed = sftpBookmarkReorderRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.bookmarksReorder, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.bookmarksReorder, parsed);
     },
     async sftpSyncStart(request: SftpSyncStartRequest): Promise<{ syncId: string }> {
       const parsed = sftpSyncStartRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.syncStart, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.syncStart, parsed);
       return sftpSyncStartResponseSchema.parse(result);
     },
     async sftpSyncStop(request: SftpSyncStopRequest): Promise<void> {
       const parsed = sftpSyncStopRequestSchema.parse(request);
-      await ipcRenderer.invoke(ipcChannels.sftp.syncStop, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.syncStop, parsed);
     },
     async sftpSyncList(): Promise<{ syncs: SftpSyncStatus[] }> {
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.syncList);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.syncList);
       return sftpSyncListResponseSchema.parse(result);
     },
     onSftpSyncEvent: createSubscription(
       ipcRenderer,
       logger,
-      ipcChannels.sftp.syncEvent,
+      sftpIpcChannels.syncEvent,
       "onSftpSyncEvent",
       "SFTP sync event",
       sftpSyncEventSchema
     ),
     async sftpDragOut(request: SftpDragOutRequest): Promise<SftpDragOutResponse> {
       const parsed = sftpDragOutRequestSchema.parse(request);
-      const result = await ipcRenderer.invoke(ipcChannels.sftp.dragOut, parsed);
+      const result = await ipcRenderer.invoke(sftpIpcChannels.dragOut, parsed);
       return sftpDragOutResponseSchema.parse(result);
     },
     sftpStartNativeDragOut(request: SftpDragOutRequest): void {
       const parsed = sftpDragOutRequestSchema.parse(request);
-      ipcRenderer.send(ipcChannels.sftp.startNativeDragOut, parsed);
+      ipcRenderer.send(sftpIpcChannels.startNativeDragOut, parsed);
     },
     onKeyboardInteractive: createSubscription(
       ipcRenderer,
       logger,
-      ipcChannels.sftp.keyboardInteractive,
+      sftpIpcChannels.keyboardInteractive,
       "onKeyboardInteractive",
       "keyboard-interactive",
       keyboardInteractiveRequestSchema
     ),
     async keyboardInteractiveRespond(response: KeyboardInteractiveResponse): Promise<void> {
       const parsed = keyboardInteractiveResponseSchema.parse(response);
-      await ipcRenderer.invoke(ipcChannels.sftp.keyboardInteractiveResponse, parsed);
+      await ipcRenderer.invoke(sftpIpcChannels.keyboardInteractiveResponse, parsed);
     },
   };
 }

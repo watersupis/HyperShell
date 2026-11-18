@@ -6,6 +6,7 @@ out/
 .env.*
 test-results/
 apps/desktop/release/
+apps/desktop/Microsoft
 tmp-linux-release/
 linux-artifacts/
 CLAUDE.md
@@ -16,3 +17,11 @@ docs/plans/
 docs/_archive/
 .DS_Store
 *.log
+plugins/**/.packages/
+wiki/.vitepress/cache/
+wiki/.vitepress/temp/
+wiki/.vitepress/dist/
+wiki/.vitepress/.temp/
+.serena
+.pnpm-store
+.tools

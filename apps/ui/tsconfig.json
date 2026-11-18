@@ -2,8 +2,14 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "jsx": "react-jsx",
-    "rootDir": "src",
     "outDir": "dist"
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "../../plugins/builtin/*/ui.ts",
+    "../../plugins/builtin/*/ui/**/*.ts",
+    "../../plugins/builtin/*/ui/**/*.tsx",
+    "../../plugins/builtin/ui.ts"
+  ]
 }

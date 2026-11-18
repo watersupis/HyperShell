@@ -1,15 +1,14 @@
+export type { SessionOutputObserver } from "./sessionOutputObserver";
+export * from "./sessionLifecycle";
+export * from "./sessionOpen";
 export * from "./sessionManager";
 export * from "./ssh";
 export * from "./transports/scpCommand";
-export * from "./transports/serialTransport";
-export * from "./transports/sftpTransport";
-export * from "./transports/sshPtyTransport";
+export { buildSshArgs, buildSshPtyCommand } from "./transports/sshCommand";
+export type { SshConnectionProfile, SshPtyCommand } from "./transports/sshCommand";
 export * from "./transports/transportEvents";
-export { buildForwardArg, createPortForward, type PortForwardProfile, type PortForwardRequest, type PortForwardHandle } from "./portForwarding";
-export { createSyncEngine, type SyncEngine, type SyncConfig, type SyncStatus, type SyncEvent, type SyncEventListener } from "./sftp/syncEngine";
 export { createNetworkMonitor, type NetworkMonitor, type NetworkMonitorOptions } from "./networkMonitor";
-export { createSsh2ConnectionPool, type Ssh2ConnectionPool, type Ssh2PoolTarget, type PooledConnection, type PoolStats, type ResolvedAuth } from "./ssh2ConnectionPool";
-export { probeHostKey, type HostKeyInfo } from "./hostKeyProbe";
+export type { Ssh2ConnectionPool, Ssh2PoolTarget, PooledConnection, PoolStats, ResolvedAuth } from "./ssh2ConnectionPool";
 export {
   AsciinemaWriter,
   type AsciinemaHeader,
@@ -22,21 +21,15 @@ export {
   parseAsciinemaCast,
   type AsciinemaRecording
 } from "./recording/asciinemaReader";
-export {
-  tmuxProbe,
-  parseTmuxListOutput,
-  type TmuxSession,
-  type TmuxProbeOptions
-} from "./tmux/tmuxProbe";
-export {
-  createDefaultProbes,
-  detectLocalShells,
-  parseWslDistros
-} from "./localShells/detectLocalShells";
-export type { DetectProbes, DetectedShell } from "./localShells/detectLocalShells";
-export { createLocalShellTransport } from "./transports/localShellTransport";
-export type { CreateLocalShellTransportDeps } from "./transports/localShellTransport";
 export { createPtyProcess, sanitizePtyEnv } from "./transports/ptyProcess";
+export type {
+  DisposableLike,
+  PtyExitEvent,
+  PtyProcessLike,
+  PtyProcessConfig,
+  PtySpawn,
+  PtySpawnOptions,
+} from "./transports/ptyProcess";
 export type { LocalConnectionOptions } from "./transports/transportEvents";
 export * from "./processTitle/foregroundProcess";
 export * from "./processTitle/nodeCliName";

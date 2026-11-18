@@ -91,6 +91,22 @@ export default tseslint.config(
     },
   },
 
+  // Plugin packages are typechecked by their host projects. Parse their
+  // TypeScript here so lint accepts the migrated tree and known local rule
+  // suppressions, while the architecture gate owns plugin-boundary checks.
+  {
+    files: ["plugins/**/*.ts", "plugins/**/*.tsx"],
+    languageOptions: {
+      parser: tseslint.parser,
+      globals: { ...globals.node, ...globals.browser },
+    },
+    plugins: {
+      "@typescript-eslint": tseslint.plugin,
+      "jsx-a11y": jsxA11y,
+      "react-hooks": reactHooks,
+    },
+  },
+
   // Renderer: React hook correctness and JSX accessibility.
   //
   // react-hooks' own flat preset also enables the React Compiler rules
@@ -107,14 +123,15 @@ export default tseslint.config(
       "react-hooks/rules-of-hooks": "error",
       "react-hooks/exhaustive-deps": "error",
 
-      // The bridge is reached only through the lib/shell seam; a direct
+      // The bridge is reached only through the workbench/shared/shell seam; a direct
       // window.hypershell call is a silent no-op the moment the preload drifts.
       "no-restricted-properties": [
         "error",
         {
           object: "window",
           property: "hypershell",
-          message: "Use getShell()/hasShell() from lib/shell instead of window.hypershell.",
+          message:
+            "Use getShell()/hasShell() from workbench/shared/shell instead of window.hypershell.",
         },
       ],
 
@@ -133,7 +150,7 @@ export default tseslint.config(
       ],
       "jsx-a11y/no-noninteractive-tabindex": [
         "error",
-        { tags: [], roles: ["tabpanel", "application"], allowExpressionValues: true },
+        { tags: [], roles: ["tabpanel", "application", "separator"], allowExpressionValues: true },
       ],
     },
   },
@@ -141,7 +158,10 @@ export default tseslint.config(
   // The seam itself and its adapter test are the only places allowed to touch
   // the real bridge global.
   {
-    files: ["apps/ui/src/lib/shell.ts", "apps/ui/src/lib/shell.test.ts"],
+    files: [
+      "apps/ui/src/workbench/shared/shell.ts",
+      "apps/ui/src/workbench/shared/shell.test.ts",
+    ],
     rules: { "no-restricted-properties": "off" },
   },
 

@@ -1,0 +1,45 @@
+import type { HostRecord } from "@hypershell/db";
+
+const CSV_FIELDS = [
+  "name", "hostname", "port", "username", "identityFile",
+  "groupId", "notes", "authMethod", "agentKind",
+  "proxyJump", "keepAliveInterval", "autoReconnect",
+] as const;
+
+function escapeCsv(value: unknown): string {
+  let str = String(value ?? "");
+  if (/^[=+\-@\t\r\n]/.test(str)) str = `'${str}`;
+  if (/[",\r\n]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+  return str;
+}
+
+function quoteSshValue(value: string): string {
+  return /\s/.test(value) ? `"${value.replace(/(["\\])/g, "\\$1")}"` : value;
+}
+
+function toHostAlias(host: HostRecord): string {
+  return (host.name.trim() || host.hostname.trim() || "host").replace(/\s+/g, "-");
+}
+
+export function exportHostsToJson(hosts: HostRecord[]): string {
+  return JSON.stringify(hosts, null, 2);
+}
+
+export function exportHostsToCsv(hosts: HostRecord[]): string {
+  return [CSV_FIELDS.join(","), ...hosts.map((host) =>
+    CSV_FIELDS.map((field) => escapeCsv(host[field as keyof HostRecord])).join(","),
+  )].join("\n");
+}
+
+export function exportHostsToSshConfig(hosts: HostRecord[]): string {
+  const blocks = hosts.map((host) => {
+    const lines = [`Host ${quoteSshValue(toHostAlias(host))}`, `  HostName ${quoteSshValue(host.hostname)}`];
+    if (host.port) lines.push(`  Port ${host.port}`);
+    if (host.username) lines.push(`  User ${quoteSshValue(host.username)}`);
+    if (host.identityFile) lines.push(`  IdentityFile ${quoteSshValue(host.identityFile)}`);
+    if (host.proxyJump) lines.push(`  ProxyJump ${quoteSshValue(host.proxyJump)}`);
+    if (host.keepAliveInterval && host.keepAliveInterval > 0) lines.push(`  ServerAliveInterval ${host.keepAliveInterval}`);
+    return lines.join("\n");
+  });
+  return `${blocks.join("\n\n")}\n`;
+}

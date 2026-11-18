@@ -5,7 +5,7 @@ const startServer = process.env.PLAYWRIGHT_START_SERVER !== "0";
 const chromiumExecutablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 
 export default defineConfig({
-  testDir: "./tests",
+  testDir: "./tests/e2e",
   timeout: 30_000,
   expect: {
     timeout: 5_000

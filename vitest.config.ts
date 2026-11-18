@@ -2,12 +2,13 @@ import { defineConfig, configDefaults } from "vitest/config";
 
 export default defineConfig({
   test: {
-    projects: ["apps/*", "packages/*"],
+    projects: ["apps/*", "packages/*", "plugins/external/broadcast-snippets"],
     include: [
-      "apps/*/src/**/*.test.ts",
-      "apps/*/src/**/*.test.tsx",
-      "packages/*/src/**/*.test.ts",
-      "packages/*/src/**/*.test.tsx"
+      "apps/*/tests/unit/**/*.test.ts",
+      "apps/*/tests/unit/**/*.test.tsx",
+      "packages/*/tests/unit/**/*.test.ts",
+      "packages/*/tests/unit/**/*.test.tsx",
+      "plugins/external/broadcast-snippets/tests/unit/**/*.test.ts"
     ],
     exclude: [
       ...configDefaults.exclude,

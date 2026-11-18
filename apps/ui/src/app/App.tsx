@@ -1,157 +1,76 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useStore } from "zustand";
 import { toast, Toaster } from "sonner";
-import { getShell, hasShell } from "../lib/shell";
+import { getShell, hasShell } from "../workbench/shared/shell";
 
-import { broadcastStore } from "../features/broadcast/broadcastStore";
-import { useSnippetStore } from "../features/snippets/snippetStore";
-import type { HostFormValue } from "../features/hosts/HostForm";
-import { HostForm, ENV_VAR_NAME_REGEX } from "../features/hosts/HostForm";
-import type { HostRecord } from "../features/hosts/HostsView";
-import {
-  SshConfigImportDialog,
-  type SshConfigImportItem
-} from "../features/hosts/SshConfigImportDialog";
-import { PuttyImportDialog } from "../features/hosts/PuttyImportDialog";
-import { SshManagerImportDialog } from "../features/hosts/SshManagerImportDialog";
-import { ConnectionHistoryDialog } from "../features/hosts/ConnectionHistoryDialog";
-import { AppShell } from "../features/layout/AppShell";
-import { Modal } from "../features/layout/Modal";
-import { Workspace } from "../features/layout/Workspace";
+import { AppShell } from "../workbench/shell/AppShell";
+import { Modal } from "../workbench/shared/Modal";
+import { Workspace } from "../workbench/editor-area/Workspace";
+import { requestTerminalFocus } from "../workbench/editor-area/terminal/terminalFocus";
 import {
   layoutStore,
   restorableWorkspaceTabs,
   serializeWorkspaceLayout,
   workspaceTabToLayoutTab,
-} from "../features/layout/layoutStore";
-import { handlePaneShortcut } from "../features/layout/paneShortcuts";
-import { localProfilesStore, selectLaunchableProfiles } from "../features/local/localProfilesStore";
-import { LocalProfileForm } from "../features/local/LocalProfileForm";
-import { QuickConnectDialog } from "../features/quick-connect/QuickConnectDialog";
-import type { QuickConnectProfile } from "../features/quick-connect/searchIndex";
-import { SerialProfileForm, type SerialProfileFormValue } from "../features/serial/SerialProfileForm";
-import { sessionRecoveryStore } from "../features/sessions/sessionRecoveryStore";
-import { SessionRecoveryDialog } from "../features/sessions/SessionRecoveryDialog";
+} from "../workbench/editor-area/layoutStore";
+import type { PaneLayoutNode } from "../workbench/editor-area/layoutStore";
+import { workspacePresetLayout, type WorkspaceLaunchTarget, type WorkspacePreset } from "../workbench/shell/WorkspaceCreator";
+import { handlePaneShortcut } from "../workbench/editor-area/paneShortcuts";
+const QuickConnectDialog = lazy(() => import("../workbench/shell/quick-connect/QuickConnectDialog").then((module) => ({ default: module.QuickConnectDialog })));
+import type { QuickConnectProfile } from "../workbench/shell/quick-connect/searchIndex";
+import { sessionRecoveryStore } from "../workbench/shell/session-recovery/sessionRecoveryStore";
+const SessionRecoveryDialog = lazy(() => import("../workbench/shell/session-recovery/SessionRecoveryDialog").then((module) => ({ default: module.SessionRecoveryDialog })));
 import {
-  isRestorableSavedSession,
   savedSessionToLayoutTab,
-} from "../features/sessions/savedSessionRestore";
-import { Sidebar } from "../features/sidebar/Sidebar";
-import { SettingsPanel } from "../features/settings/SettingsPanel";
-import { settingsStore } from "../features/settings/settingsStore";
-import { appThemeVariant, resolveAppTheme } from "../features/settings/appThemes";
-import { TransferPopup } from "../features/sftp/components/TransferPopup";
-import { startTransferEventCoordinator } from "../features/sftp/transferEventCoordinator";
-import { resolveTerminalTheme } from "../features/terminal/terminalTheme";
-import { DEFAULT_RECONNECT_BASE_INTERVAL, DEFAULT_RECONNECT_MAX_ATTEMPTS } from "@hypershell/shared";
+} from "../workbench/shell/session-recovery/savedSessionRestore";
+import { Sidebar } from "../workbench/primary-sidebar/Sidebar";
+const SettingsPanel = lazy(() => import("../workbench/shell/settings/SettingsPanel").then((module) => ({ default: module.SettingsPanel })));
+import { useSecondarySidebarStore } from "../workbench/plugin-runtime/secondarySidebarStore";
+import { migrateInternalWorkspaceTab } from "../workbench/plugin-runtime/internalPluginRegistry";
+import { pluginPanelViewId, useWorkbenchPanelStore } from "../workbench/panel/panelStore";
+import { getPluginSidebarTitle, PluginSecondarySidebarContent } from "../workbench/plugin-runtime/PluginSecondarySidebarContent";
+import { settingsStore } from "../workbench/shell/settings/settingsStore";
+import { appThemeVariant, resolveAppTheme } from "../workbench/shell/settings/appThemes";
+import { resolveTerminalTheme } from "../workbench/editor-area/terminal/terminalTheme";
 import type {
-  ConnectionHistoryRecord,
-  LocalProfileEnvVar,
-  LocalProfileRecord,
+  HostFormValue,
+  HostRecord as HostDbRecord,
+  HostUiRecord as HostRecord,
   SavedSessionRecord,
-  PuttySession,
-  SerialProfileRecord,
   TagRecord,
   WorkspaceTab,
 } from "@hypershell/shared";
-import { EditorApp } from "../features/editor/EditorApp";
-import { TelnetQuickConnect } from "../features/telnet/TelnetQuickConnect";
-import { ConnectionChallengeDialogs } from "../features/connection/ConnectionChallengeDialogs";
+const TelnetQuickConnect = lazy(() => import("../workbench/shell/connections/TelnetQuickConnect").then((module) => ({ default: module.TelnetQuickConnect })));
+import { ConnectionChallengeDialogs } from "../workbench/shell/connections/challenges/ConnectionChallengeDialogs";
 import {
   answerKeyboardInteractive,
-  connectSftpWithChallenges,
-  pickTmuxSession,
-} from "../features/connection/connectionChallengeFlows";
-import { CommandPalette } from "../features/command-palette/CommandPalette";
-import { useCommandPaletteStore } from "../features/command-palette/commandPaletteStore";
-import { createCommands, type CommandContext } from "../features/command-palette/commandRegistry";
-import type { Command } from "../features/command-palette/searchCommands";
-import { useTunnelStore } from "../features/tunnels/tunnelStore";
-import { useUpdateStore } from "../features/updates/updateStore";
+} from "../workbench/shell/connections/challenges/connectionChallengeFlows";
+const CommandPalette = lazy(() => import("../workbench/shell/command-palette/CommandPalette").then((module) => ({ default: module.CommandPalette })));
+import { useCommandPaletteStore } from "../workbench/shell/command-palette/commandPaletteStore";
+import { createCommands, type CommandContext } from "../workbench/shell/command-palette/commandRegistry";
+import { useUpdateStore } from "../workbench/shell/updates/updateStore";
+import { activateInternalPlugins, internalPlugins, getInternalPluginCommands, getInternalPluginHostEditor, getInternalPluginHostEditorContribution, getInternalPluginQuickConnectProfiles, openInternalPluginQuickConnectProfile, prepareInternalHostConnection, isPluginWorkspaceTab, canRestoreInternalSavedSession, migrateInternalPluginSettings } from "../workbench/plugin-runtime/internalPluginRegistry";
+import { InternalPluginOverlays } from "../workbench/plugin-runtime/InternalPluginOverlays";
+import { internalPluginUiHostServices } from "../workbench/plugin-runtime/internalPluginUiHostServices";
 
-
-function normalizeHostEnvVars(
-  envVars: HostFormValue["envVars"] | undefined
-): HostFormValue["envVars"] {
-  if (!Array.isArray(envVars)) {
-    return [];
-  }
-
-  return envVars
-    .map((item, index) => ({
-      id: item.id,
-      name: item.name.trim(),
-      value: item.value ?? "",
-      isEnabled: item.isEnabled ?? true,
-      sortOrder: index,
-    }))
-    .filter((item) => item.name.length > 0 && ENV_VAR_NAME_REGEX.test(item.name));
+function DeferredMount({ active, children }: { active: boolean; children: ReactNode }) {
+  const [hasOpened, setHasOpened] = useState(false);
+  useEffect(() => {
+    if (active) setHasOpened(true);
+  }, [active]);
+  return active || hasOpened ? <Suspense fallback={null}>{children}</Suspense> : null;
 }
 
-function mapDbHostToUiHost(h: Record<string, unknown>): HostRecord {
-  return {
-    id: String(h.id ?? ""),
-    name: String(h.name ?? ""),
-    hostname: String(h.hostname ?? ""),
-    port: Number(h.port ?? 22),
-    username: h.username == null ? "" : String(h.username),
-    identityFile: h.identityFile == null ? "" : String(h.identityFile),
-    hostProfileId: h.hostProfileId == null ? "" : String(h.hostProfileId),
-    envVars: [],
-    group: h.group == null ? "" : String(h.group),
-    tags: "",
-    tagIds: [],
-    authMethod: (h.authMethod as HostRecord["authMethod"]) ?? "default",
-    agentKind: (h.agentKind as HostRecord["agentKind"]) ?? "system",
-    opReference: h.opReference == null ? "" : String(h.opReference),
-    notes: h.notes ? String(h.notes) : undefined,
-    isFavorite: Boolean(h.isFavorite ?? (h as Record<string, unknown>).is_favorite ?? false),
-    sortOrder: h.sortOrder != null ? Number(h.sortOrder) : null,
-    color: h.color ? String(h.color) : null,
-    proxyJump: h.proxyJump == null ? "" : String(h.proxyJump),
-    proxyJumpHostIds: h.proxyJumpHostIds == null ? "" : String(h.proxyJumpHostIds),
-    keepAliveInterval:
-      h.keepAliveInterval == null ? "" : String(h.keepAliveInterval),
-    autoReconnect: Boolean(h.autoReconnect ?? false),
-    tmuxDetect: Boolean(h.tmuxDetect ?? false),
-    shellIntegration: Boolean(h.shellIntegration ?? true),
-    reconnectMaxAttempts:
-      h.reconnectMaxAttempts == null ? DEFAULT_RECONNECT_MAX_ATTEMPTS : Number(h.reconnectMaxAttempts),
-    reconnectBaseInterval:
-      h.reconnectBaseInterval == null ? DEFAULT_RECONNECT_BASE_INTERVAL : Number(h.reconnectBaseInterval),
-    password: "",
-    savePassword: false,
-    clearSavedPassword: false,
-    hasSavedPassword:
-      ((h.authMethod as string | undefined) ?? "default") === "password" &&
-      h.authProfileId != null,
-    passwordSavedAt:
-      typeof h.passwordSavedAt === "string" ? h.passwordSavedAt : null
-  };
-}
-
-async function loadHosts(): Promise<HostRecord[]> {
+async function loadHosts(mapRecord?: (record: HostDbRecord) => unknown): Promise<HostRecord[]> {
   if (!hasShell()) {
     console.warn("[hypershell] preload bridge not available — skipping host list");
     return [];
   }
   try {
     const dbHosts = await getShell().listHosts();
-    return dbHosts.map((h: Record<string, unknown>) => mapDbHostToUiHost(h));
+    return mapRecord ? dbHosts.map((record) => mapRecord(record) as HostRecord) : [];
   } catch (err) {
     console.error("[hypershell] failed to load hosts:", err);
-    return [];
-  }
-}
-
-async function loadSerialProfiles(): Promise<SerialProfileRecord[]> {
-  if (!hasShell()) {
-    return [];
-  }
-  try {
-    return await getShell().listSerialProfiles();
-  } catch (err) {
-    console.error("[hypershell] failed to load serial profiles:", err);
     return [];
   }
 }
@@ -213,107 +132,6 @@ async function attachHostTags(hosts: HostRecord[]): Promise<HostRecord[]> {
   });
 }
 
-async function persistSerialProfile(profile: SerialProfileRecord): Promise<void> {
-  if (!hasShell()) return;
-  try {
-    await getShell().upsertSerialProfile(profile);
-  } catch (err) {
-    console.error("[hypershell] failed to persist serial profile:", err);
-  }
-}
-
-async function persistHost(host: HostRecord): Promise<HostRecord | null> {
-  if (!hasShell()) {
-    console.warn("[hypershell] upsertHost not available");
-    return null;
-  }
-  try {
-    const authMethod = host.authMethod ?? "default";
-    const agentKind = host.agentKind ?? "system";
-    const opReference = host.opReference ?? "";
-    const proxyJump = host.proxyJump ?? "";
-    const proxyJumpHostIds = host.proxyJumpHostIds ?? "";
-    const autoReconnect = host.autoReconnect ?? false;
-    const reconnectMaxAttempts = host.reconnectMaxAttempts ?? DEFAULT_RECONNECT_MAX_ATTEMPTS;
-    const reconnectBaseInterval = host.reconnectBaseInterval ?? DEFAULT_RECONNECT_BASE_INTERVAL;
-    const tmuxDetect = host.tmuxDetect ?? false;
-    const shellIntegration = host.shellIntegration ?? true;
-
-    const keepAliveSource =
-      typeof host.keepAliveInterval === "string" ? host.keepAliveInterval : "";
-    const trimmedKeepAlive = keepAliveSource.trim();
-    const parsedKeepAlive =
-      trimmedKeepAlive.length === 0 ? null : Number.parseInt(trimmedKeepAlive, 10);
-    const keepAliveInterval =
-      parsedKeepAlive == null || Number.isNaN(parsedKeepAlive)
-        ? null
-        : Math.max(0, parsedKeepAlive);
-
-    const savePassword = authMethod === "password" && host.savePassword;
-    const clearSavedPassword =
-      authMethod !== "password" || host.clearSavedPassword;
-    const password = host.password ?? "";
-    const hasPasswordForSave = password.trim().length > 0;
-
-    const result = await getShell().upsertHost({
-      id: host.id,
-      name: host.name,
-      hostname: host.hostname,
-      port: host.port,
-      username: host.username || null,
-      identityFile: host.identityFile || null,
-      hostProfileId: host.hostProfileId || null,
-      group: host.group,
-      tags: host.tags,
-      notes: host.notes || null,
-      authMethod,
-      agentKind,
-      opReference: opReference || null,
-      isFavorite: host.isFavorite ?? false,
-      color: host.color ?? null,
-      sortOrder: host.sortOrder ?? null,
-      proxyJump: proxyJump || null,
-      proxyJumpHostIds: proxyJumpHostIds || null,
-      keepAliveInterval,
-      autoReconnect,
-      reconnectMaxAttempts,
-      reconnectBaseInterval,
-      tmuxDetect,
-      shellIntegration,
-      savePassword,
-      clearSavedPassword,
-      ...(savePassword && hasPasswordForSave
-        ? { password }
-        : {})
-    });
-    return mapDbHostToUiHost(result as unknown as Record<string, unknown>);
-  } catch (err) {
-    console.error("[hypershell] failed to persist host:", err);
-    return null;
-  }
-}
-
-function toSerialFormInitialValue(
-  profile: SerialProfileRecord | null
-): Partial<SerialProfileFormValue> | undefined {
-  if (!profile) {
-    return undefined;
-  }
-
-  return {
-    name: profile.name,
-    path: profile.path,
-    baudRate: profile.baudRate,
-    dataBits: profile.dataBits as 5 | 6 | 7 | 8,
-    stopBits: profile.stopBits as 1 | 2,
-    parity: profile.parity,
-    flowControl: profile.flowControl,
-    localEcho: profile.localEcho,
-    dtr: profile.dtr,
-    rts: profile.rts
-  };
-}
-
 function useAppTheme() {
   const appTheme = useStore(settingsStore, (s) => s.settings.appearance.appTheme);
 
@@ -343,56 +161,124 @@ function MainApp() {
   const [isQuickConnectOpen, setIsQuickConnectOpen] = useState(false);
   const [hostModalOpen, setHostModalOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [importModalOpen, setImportModalOpen] = useState(false);
-  const [puttyImportOpen, setPuttyImportOpen] = useState(false);
-  const [sshManagerImportOpen, setSshManagerImportOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<HostRecord | null>(null);
-  const [serialProfiles, setSerialProfiles] = useState<SerialProfileRecord[]>([]);
-  const [serialModalOpen, setSerialModalOpen] = useState(false);
-  const [editingSerial, setEditingSerial] = useState<SerialProfileRecord | null>(null);
-  const [availablePorts, setAvailablePorts] = useState<string[]>([]);
   const [connectingHostIds, setConnectingHostIds] = useState<Set<string>>(() => new Set());
-  const [lastConnectedAtByHostId, setLastConnectedAtByHostId] = useState<Record<string, string | null>>({});
-  const [connectionHistoryHost, setConnectionHistoryHost] = useState<HostRecord | null>(null);
   const [restoreBannerVisible, setRestoreBannerVisible] = useState(false);
   const [lastWorkspaceTabs, setLastWorkspaceTabs] = useState<WorkspaceTab[]>([]);
   const [sessionRecoveryOpen, setSessionRecoveryOpen] = useState(false);
-  const [localProfileModalOpen, setLocalProfileModalOpen] = useState(false);
-  const [editingLocalProfile, setEditingLocalProfile] = useState<LocalProfileRecord | null>(null);
-  const [editingLocalProfileEnvVars, setEditingLocalProfileEnvVars] = useState<LocalProfileEnvVar[]>([]);
-  const [editingLocalProfileEnvVarsLoaded, setEditingLocalProfileEnvVarsLoaded] = useState(true);
   const [telnetDialogOpen, setTelnetDialogOpen] = useState(false);
-  const tmuxProbeGenRef = useRef(0);
   const backupRestoreInFlightRef = useRef(false);
   const [savedRecoverySessions, setSavedRecoverySessions] = useState<SavedSessionRecord[]>([]);
-
+  const [enabledInternalPluginIds, setEnabledInternalPluginIds] = useState<Set<string>>(
+    () => new Set(internalPlugins.filter((plugin) => plugin.kind === "core").map((plugin) => plugin.id))
+  );
+  const HostEditor = getInternalPluginHostEditor(enabledInternalPluginIds);
+  const hostEditorContribution = getInternalPluginHostEditorContribution(enabledInternalPluginIds);
   const openTab = useStore(layoutStore, (s) => s.openTab);
+  const secondarySidebarTarget = useStore(useSecondarySidebarStore, (s) => s.plugin);
+  const closeSecondarySidebar = useSecondarySidebarStore((s) => s.closePlugin);
+  const builtinHostActions = useMemo(
+    () => internalPlugins
+      .filter((plugin) => enabledInternalPluginIds.has(plugin.id))
+      .flatMap((plugin) => plugin.getHostActions?.({
+        openTab,
+        host: {
+          isAvailable: internalPluginUiHostServices.isAvailable,
+          challenges: internalPluginUiHostServices.challenges,
+          sftp: internalPluginUiHostServices.sftp,
+          security: internalPluginUiHostServices.security,
+          pluginMain: internalPluginUiHostServices.pluginMain,
+        },
+      }) ?? []),
+    [enabledInternalPluginIds, openTab]
+  );
+
+  const isCommandPaletteOpen = useCommandPaletteStore((s) => s.isOpen);
   const tabs = useStore(layoutStore, (s) => s.tabs);
   const terminalThemeName = useStore(
     settingsStore,
     (s) => s.settings.terminal.theme
   );
   const customThemes = useStore(settingsStore, (s) => s.settings.customThemes);
-  const toggleBroadcast = useStore(broadcastStore, (s) => s.toggle);
-  const isBroadcastEnabled = useStore(broadcastStore, (s) => s.enabled);
-  const setBroadcastTargets = useStore(broadcastStore, (s) => s.setTargets);
   const rememberSession = useStore(sessionRecoveryStore, (s) => s.remember);
+
+  const openPlugin = useCallback((pluginId: string, placement: "workspace.tab" | "workspace.secondarySidebar" | "workspace.panel", hostId?: string, title?: string) => {
+    if (placement === "workspace.secondarySidebar") {
+      useSecondarySidebarStore.getState().openPlugin({ pluginId, hostId, title });
+      return;
+    }
+    if (placement === "workspace.panel") {
+      useWorkbenchPanelStore.getState().openView(pluginPanelViewId(pluginId), { hostId });
+      return;
+    }
+    const sessionId = `plugin-tab-${pluginId}-${hostId ?? "all"}`;
+    const existingPane = layoutStore.getState().panes.find((pane) => pane.tabSessionIds.includes(sessionId));
+    if (existingPane) {
+      layoutStore.getState().activateTab(sessionId, existingPane.paneId);
+      return;
+    }
+    openTab({
+      sessionId,
+      title: title ?? pluginId,
+      type: "plugin",
+      pluginId,
+      hostId,
+    });
+  }, [openTab]);
+
+  useEffect(() => {
+    const openPluginSettings = () => setSettingsOpen(true);
+    window.addEventListener("hypershell:open-plugin-settings", openPluginSettings);
+    return () => {
+      window.removeEventListener("hypershell:open-plugin-settings", openPluginSettings);
+    };
+  }, []);
 
   // One transfer-event listener for the whole app — SFTP tabs and the transfer
   // popup subscribe to it instead of the IPC bridge.
-  useEffect(() => startTransferEventCoordinator(), []);
+  useEffect(() => {
+    let cancelled = false;
+    let deactivatePlugins: (() => void) | null = null;
+    void Promise.all([
+      getShell().internalPluginsList(),
+      settingsStore.getState().load(),
+    ]).then(async ([plugins]) => {
+      if (cancelled) return;
+      const settings = settingsStore.getState().settings;
+      const currentMigrationState = {
+        general: { ...settings.general } as Record<string, unknown>,
+        pluginSettings: Object.fromEntries(
+          Object.entries(settings.pluginSettings).map(([id, values]) => [id, { ...values }])
+        ),
+      };
+      const migratedSettings = migrateInternalPluginSettings(currentMigrationState);
+      if (JSON.stringify(currentMigrationState) !== JSON.stringify(migratedSettings)) {
+        await settingsStore.getState().applyPluginSettingsMigrations(migratedSettings);
+      }
+      if (cancelled) return;
+      const enabled = new Set(plugins.filter((plugin) => plugin.enabled).map((plugin) => plugin.id));
+      setEnabledInternalPluginIds(enabled);
+      deactivatePlugins = activateInternalPlugins(enabled);
+    }).catch((error) => {
+      console.warn("[hypershell] failed loading built-in plugin states:", error);
+    });
+
+    return () => {
+      cancelled = true;
+      deactivatePlugins?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
-    void Promise.all([loadHosts(), loadSerialProfiles(), loadTags()]).then(
-      async ([h, sp, loadedTags]) => {
+    void Promise.all([loadHosts(hostEditorContribution?.mapRecord), loadTags()]).then(
+      async ([h, loadedTags]) => {
         const hostsWithTags = await attachHostTags(h);
         if (cancelled) {
           return;
         }
         setHosts(hostsWithTags);
-        setSerialProfiles(sp);
         setTags(loadedTags);
       }
     );
@@ -422,7 +308,7 @@ function MainApp() {
         return getShell().sessionLoadSavedState().then((sessions) => {
           // Same rule as the banner above: list only what Restore can actually
           // reopen, so the dialog never promises a row that silently vanishes.
-          const restorable = sessions.filter(isRestorableSavedSession);
+          const restorable = sessions.filter(canRestoreInternalSavedSession);
           if (restorable.length === 0) {
             return;
           }
@@ -436,72 +322,23 @@ function MainApp() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hostEditorContribution]);
 
   useEffect(() => {
-    void localProfilesStore.getState().load();
-  }, []);
-
-  const refreshConnectionHistorySummary = useCallback(async () => {
-    if (!hasShell()) {
-      return;
-    }
-
-    try {
-      const recent: ConnectionHistoryRecord[] =
-        await getShell().connectionHistoryListRecent({ limit: 1000 });
-      const next: Record<string, string | null> = {};
-      for (const host of hosts) {
-        next[host.id] = null;
-      }
-      for (const item of recent) {
-        if (!item.hostId || !item.wasSuccessful) {
-          continue;
-        }
-        const current = next[item.hostId];
-        if (!current || Date.parse(item.connectedAt) > Date.parse(current)) {
-          next[item.hostId] = item.connectedAt;
-        }
-      }
-      setLastConnectedAtByHostId(next);
-    } catch (err) {
-      console.warn("[hypershell] failed to load connection history summary:", err);
-    }
-  }, [hosts]);
-
-  useEffect(() => {
-    void refreshConnectionHistorySummary();
-  }, [refreshConnectionHistorySummary]);
-
-  useEffect(() => {
-    if (!hasShell()) {
-      return;
-    }
-
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-    const unsubscribe = getShell().onSessionEvent((event) => {
-      const shouldRefresh =
-        (event.type === "status" && event.state === "connected") ||
-        event.type === "error" ||
-        event.type === "exit";
-      if (!shouldRefresh) {
-        return;
-      }
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
-      }
-      refreshTimer = setTimeout(() => {
-        void refreshConnectionHistorySummary();
-      }, 250);
+    let cancelled = false;
+    const unsubscribe = internalPluginUiHostServices.hostManagement.hosts.subscribeChanged(() => {
+      void Promise.all([loadHosts(hostEditorContribution?.mapRecord), loadTags()]).then(async ([loadedHosts, loadedTags]) => {
+        if (cancelled) return;
+        setHosts(await attachHostTags(loadedHosts));
+        setTags(loadedTags);
+      });
     });
 
     return () => {
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
-      }
-      unsubscribe?.();
+      cancelled = true;
+      unsubscribe();
     };
-  }, [refreshConnectionHistorySummary]);
+  }, [hostEditorContribution]);
 
   useEffect(() => {
     const store = useUpdateStore.getState();
@@ -526,8 +363,6 @@ function MainApp() {
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, []);
-
-  const tabSessionIds = useMemo(() => tabs.map((t) => t.sessionId), [tabs]);
 
   const activeSessionHostIds = useMemo(() => {
     const ids = new Set<string>();
@@ -554,11 +389,10 @@ function MainApp() {
   }, [activeSessionHostIds]);
 
   useEffect(() => {
-    for (const id of tabSessionIds) {
-      rememberSession(id);
+    for (const tab of tabs) {
+      if (!isPluginWorkspaceTab(tab)) rememberSession(tab.sessionId);
     }
-    setBroadcastTargets(tabSessionIds);
-  }, [rememberSession, setBroadcastTargets, tabSessionIds]);
+  }, [rememberSession, tabs]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -575,22 +409,14 @@ function MainApp() {
         e.preventDefault();
         setIsQuickConnectOpen(true);
       }
-      if (e.key.toLowerCase() === "b" && (e.ctrlKey || e.metaKey)) {
-        e.preventDefault();
-        toggleBroadcast();
-      }
       if (e.key === "," && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         setSettingsOpen(true);
       }
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "S") {
-        e.preventDefault();
-        useSnippetStore.getState().toggle();
-      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggleBroadcast]);
+  }, []);
 
   useEffect(() => {
     return getShell().onQuickConnect(() => {
@@ -612,74 +438,6 @@ function MainApp() {
     document.documentElement.style.setProperty("--terminal-bg", terminalBg);
   }, [terminalThemeName, customThemes]);
 
-  const refreshPorts = useCallback(() => {
-    getShell().listSerialPorts()
-      .then(ports => setAvailablePorts(ports.map(p => p.path)))
-      .catch(console.error);
-  }, []);
-
-  const connectSerial = useCallback(
-    (profile: SerialProfileRecord) => {
-      const sessionId = `serial-${profile.id}-${Date.now()}`;
-      openTab({
-        tabKey: sessionId,
-        sessionId,
-        title: profile.name,
-        transport: "serial",
-        profileId: profile.id,
-        preopened: false
-      });
-    },
-    [openTab]
-  );
-
-  const handleConnectLocal = useCallback(
-    (profile: LocalProfileRecord) => {
-      const sessionId = `local-${profile.id}-${Date.now()}`;
-      openTab({
-        tabKey: sessionId,
-        sessionId,
-        title: profile.name,
-        transport: "local",
-        profileId: profile.id,
-        type: "terminal",
-        preopened: false
-      });
-    },
-    [openTab]
-  );
-
-  const handleNewLocalProfile = useCallback(() => {
-    setEditingLocalProfile(null);
-    setEditingLocalProfileEnvVars([]);
-    setEditingLocalProfileEnvVarsLoaded(true);
-    setLocalProfileModalOpen(true);
-  }, []);
-
-  // Fetches the profile's real saved env vars before opening the editor —
-  // the form must never submit an empty envVars array for a profile whose
-  // existing values it never actually saw (see LocalProfileForm's
-  // envVarsLoaded / shouldIncludeEnvVarsInUpsert).
-  const handleEditLocalProfile = useCallback((profile: LocalProfileRecord) => {
-    void (async () => {
-      let envVars: LocalProfileEnvVar[] = [];
-      let loaded = false;
-      try {
-        const result = await getShell().getLocalProfileEnvVars({ id: profile.id });
-        if (result) {
-          envVars = result;
-          loaded = true;
-        }
-      } catch {
-        // Leave loaded = false — the form will refuse to touch env vars on save.
-      }
-      setEditingLocalProfile(profile);
-      setEditingLocalProfileEnvVars(envVars);
-      setEditingLocalProfileEnvVarsLoaded(loaded);
-      setLocalProfileModalOpen(true);
-    })();
-  }, []);
-
   const openHostTab = useCallback(
     (host: HostRecord, tmuxAttachTarget?: string) => {
       setConnectingHostIds((prev) => new Set(prev).add(host.id));
@@ -696,38 +454,70 @@ function MainApp() {
         preopened: false,
         tmuxAttachTarget,
       });
+      return optimisticSessionId;
     },
     [openTab]
   );
 
   const connectHost = useCallback(
     async (host: HostRecord) => {
-      // Tmux probe requires non-interactive auth (key-based or agent).
-      // Password-only hosts can't authenticate a one-shot SSH command.
-      const canProbe = host.tmuxDetect && host.authMethod !== "password" && hasShell();
-      if (canProbe) {
-        const gen = ++tmuxProbeGenRef.current;
-        try {
-          const result = await getShell().tmuxProbe({ hostId: host.id });
-          // If another probe was started while this one was in-flight, discard
-          if (gen !== tmuxProbeGenRef.current) return;
-          if (result.sessions.length > 0) {
-            const choice = await pickTmuxSession(host, result.sessions);
-            // null: superseded by a newer challenge — open nothing.
-            if (choice) {
-              openHostTab(host, choice.attachTo ?? undefined);
-            }
-            return;
-          }
-        } catch {
-          if (gen !== tmuxProbeGenRef.current) return;
-          // Probe failed — proceed with normal connection
-        }
-      }
-      openHostTab(host);
+      const connection = await prepareInternalHostConnection(
+        {
+          id: host.id,
+          name: host.name,
+          hostname: host.hostname,
+          port: host.port,
+          username: host.username,
+          hostProfileId: host.hostProfileId,
+          profile: host,
+        },
+        enabledInternalPluginIds,
+        internalPluginUiHostServices
+      );
+      if (connection === null) return null;
+      return openHostTab(host, connection?.attachTo ?? undefined);
     },
-    [openHostTab]
+    [enabledInternalPluginIds, openHostTab]
   );
+
+
+  const openWorkspaceTargets = useCallback(async (targets: WorkspaceLaunchTarget[], preset: WorkspacePreset) => {
+    const oldTabs = layoutStore.getState().tabs;
+    const opened: string[] = [];
+    for (const target of targets) {
+      try {
+        if (target.transport === "local") {
+          const sessionId = "local-" + target.profileId + "-" + Date.now() + "-" + opened.length;
+          openTab({ tabKey: sessionId, sessionId, title: target.title, transport: "local", profileId: target.profileId, type: "terminal", preopened: false });
+          opened.push(sessionId);
+          continue;
+        }
+        const host = hosts.find((item) => item.id === target.hostId || item.id === target.profileId);
+        if (!host) { toast.error("Workspace host is no longer available: " + target.title); continue; }
+        const sessionId = await connectHost(host);
+        if (sessionId) opened.push(sessionId);
+      } catch (error) {
+        toast.error("Failed to open " + target.title + ": " + (error instanceof Error ? error.message : String(error)));
+      }
+    }
+    if (!opened.length) return;
+    const openedTabs = layoutStore.getState().tabs.filter((tab) => opened.includes(tab.sessionId)).map((tab) => ({ ...tab, autoConnect: true }));
+    for (const tab of oldTabs) void getShell().closeSession({ sessionId: tab.sessionId }).catch(() => {});
+    const sizing = workspacePresetLayout(preset, targets.slice(0, opened.length));
+    const paneCount = sizing.paneCount;
+    layoutStore.setState({ tabs: openedTabs, activeSessionId: opened[0]!, panes: [{ paneId: "pane-1", sessionId: opened[0]!, tabSessionIds: opened }], paneLayout: { type: "pane", paneId: "pane-1" }, activePaneId: "pane-1", paneSizes: [100] });
+    const paneIds = Array.from({ length: paneCount }, (_, index) => "workspace-pane-" + index);
+    const paneTabs = preset === "tabs" || paneCount === 1
+      ? [opened]
+      : Array.from({ length: paneCount }, (_, index) => {
+          const chunkSize = Math.ceil(opened.length / paneCount);
+          return opened.slice(index * chunkSize, (index + 1) * chunkSize);
+        });
+    const panes = paneIds.map((paneId, index) => ({ paneId, sessionId: paneTabs[index]?.[0] ?? null, tabSessionIds: paneTabs[index] ?? [] }));
+    const buildTree = (index: number): PaneLayoutNode => index === paneCount - 1 ? { type: "pane", paneId: paneIds[index] } : { type: "split", groupId: "workspace-split-" + index, direction: sizing.splitDirection, sizes: [sizing.paneSizes[index]! / sizing.paneSizes.slice(index).reduce((sum, size) => sum + size, 0) * 100, 100 - sizing.paneSizes[index]! / sizing.paneSizes.slice(index).reduce((sum, size) => sum + size, 0) * 100], children: [{ type: "pane", paneId: paneIds[index]! }, buildTree(index + 1)] };
+    layoutStore.setState({ panes, paneLayout: paneCount === 1 ? { type: "pane", paneId: paneIds[0] } : buildTree(0), activePaneId: paneIds[0]!, activeSessionId: opened[0], paneSizes: sizing.paneSizes });
+    requestAnimationFrame(() => requestTerminalFocus(opened[0]!));
+  }, [hosts, connectHost, openTab]);
 
   const connectSshAdHoc = useCallback(
     (host: string, port: number, username: string, _password: string) => {
@@ -740,21 +530,6 @@ function MainApp() {
         title: username ? `${username}@${host}` : host,
         transport: "ssh",
         profileId,
-        preopened: false,
-      });
-    },
-    [openTab]
-  );
-
-  const connectSerialAdHoc = useCallback(
-    (port: string, _baudRate: number) => {
-      const sessionId = `serial-adhoc-${Date.now()}`;
-      openTab({
-        tabKey: sessionId,
-        sessionId,
-        title: port,
-        transport: "serial",
-        profileId: port,
         preopened: false,
       });
     },
@@ -782,44 +557,16 @@ function MainApp() {
     [openTab]
   );
 
-  const openSftpTab = useCallback(
-    (host: HostRecord, sftpSessionId: string) => {
-      const tabSessionId = `sftp-tab-${sftpSessionId}`;
-      openTab({
-        tabKey: tabSessionId,
-        sessionId: tabSessionId,
-        title: `SFTP: ${host.name}`,
-        transport: "sftp",
-        type: "sftp",
-        sftpSessionId,
-        hostId: host.id,
-        preopened: true
-      });
-    },
-    [openTab]
-  );
-
   const duplicateHost = useCallback((host: HostRecord) => {
     const newHost: HostRecord = { ...host, id: `host-${Date.now()}`, name: `${host.name} (copy)` };
     setHosts((prev) => [...prev, newHost]);
-    void persistHost(newHost).then(async () => {
-      if (!hasShell()) {
-        return;
-      }
-      try {
-        await getShell().tagsSetHostTags({
-          hostId: newHost.id,
-          tagIds: newHost.tagIds ?? [],
-        });
-      } catch (error) {
-        console.warn("[hypershell] failed to copy host tags:", error);
-      }
+    void hostEditorContribution?.persistRecord?.(newHost, internalPluginUiHostServices, {
+      persistRelatedData: true,
     });
-  }, []);
+  }, [hostEditorContribution]);
 
   const deleteHost = useCallback(async (host: HostRecord) => {
     setHosts((prev) => prev.filter((h) => h.id !== host.id));
-    setConnectionHistoryHost((current) => (current?.id === host.id ? null : current));
     await getShell().removeHost({ id: host.id });
   }, []);
 
@@ -827,16 +574,16 @@ function MainApp() {
     (host: HostRecord) => {
       const updated = { ...host, isFavorite: !host.isFavorite };
       setHosts((prev) => prev.map((h) => (h.id === host.id ? updated : h)));
-      void persistHost(updated);
+      void hostEditorContribution?.persistRecord?.(updated, internalPluginUiHostServices);
     },
-    []
+    [hostEditorContribution]
   );
 
   const setHostColor = useCallback((host: HostRecord, color: string | null) => {
     const updated = { ...host, color };
     setHosts((prev) => prev.map((h) => (h.id === host.id ? updated : h)));
-    void persistHost(updated);
-  }, []);
+    void hostEditorContribution?.persistRecord?.(updated, internalPluginUiHostServices);
+  }, [hostEditorContribution]);
 
   const reorderHosts = useCallback((items: Array<{ id: string; sortOrder: number; group: string }>) => {
     setHosts((prev) => {
@@ -856,16 +603,6 @@ function MainApp() {
     });
   }, []);
 
-  const openSftpHost = useCallback(
-    async (host: HostRecord) => {
-      const sftpSessionId = await connectSftpWithChallenges(host);
-      if (sftpSessionId) {
-        openSftpTab(host, sftpSessionId);
-      }
-    },
-    [openSftpTab]
-  );
-
   const clearSavedSessionRecoveryState = useCallback(async () => {
     if (!hasShell()) {
       return;
@@ -879,11 +616,10 @@ function MainApp() {
 
   const restoreSavedSessions = useCallback(async () => {
     for (let index = 0; index < savedRecoverySessions.length; index += 1) {
+      const session = savedRecoverySessions[index];
+      if (!canRestoreInternalSavedSession(session)) continue;
       const sessionId = `recovery-${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
-      const tab = savedSessionToLayoutTab(savedRecoverySessions[index], sessionId);
-      if (tab) {
-        openTab(tab);
-      }
+      openTab(savedSessionToLayoutTab(session, sessionId));
     }
     setSessionRecoveryOpen(false);
     setSavedRecoverySessions([]);
@@ -900,7 +636,7 @@ function MainApp() {
     for (const tab of lastWorkspaceTabs) {
       layoutStore.getState().openTab(
         workspaceTabToLayoutTab(
-          tab,
+          migrateInternalWorkspaceTab(tab),
           `ws-${Date.now()}-${Math.random().toString(36).slice(2)}`
         )
       );
@@ -922,22 +658,11 @@ function MainApp() {
         group: h.group,
         tags: h.tags?.split(",").map((t) => t.trim()) ?? []
       })),
-      ...serialProfiles.map((sp) => ({
-        id: sp.id,
-        label: sp.name,
-        hostname: sp.path,
-        transport: "serial" as const,
-        description: `${sp.baudRate} baud`
-      }))
+      ...getInternalPluginQuickConnectProfiles(enabledInternalPluginIds)
     ],
-    [hosts, serialProfiles]
+    [hosts, enabledInternalPluginIds]
   );
 
-  const localProfiles = useStore(localProfilesStore, (s) => s.profiles);
-  const launchableLocalProfiles = useMemo(
-    () => selectLaunchableProfiles(localProfiles),
-    [localProfiles]
-  );
 
   const paletteCommands = useMemo(() => {
     const ctx: CommandContext = {
@@ -961,25 +686,15 @@ function MainApp() {
         const idx = state.panes.findIndex((p) => p.paneId === state.activePaneId);
         if (idx < state.panes.length - 1) state.activatePane(state.panes[idx + 1].paneId);
       },
-      isBroadcastEnabled: () => isBroadcastEnabled,
-      toggleBroadcast: () => broadcastStore.getState().toggle(),
       openSettings: () => setSettingsOpen(true),
-      toggleSnippets: () => useSnippetStore.getState().toggle(),
       openQuickConnect: () => setIsQuickConnectOpen(true),
       openHostModal: () => { setEditingHost(null); setHostModalOpen(true); },
-      openImportSshConfig: () => setImportModalOpen(true),
-      openImportPutty: () => setPuttyImportOpen(true),
-      openImportSshManager: () => setSshManagerImportOpen(true),
       getActiveHost: () => {
         const activeId = layoutStore.getState().activeSessionId;
         const tab = layoutStore.getState().tabs.find((t) => t.sessionId === activeId);
         if (!tab?.hostId) return null;
         const host = hosts.find((h) => h.id === tab.hostId);
         return host ? { id: host.id, name: host.name } : null;
-      },
-      openSftpForHost: (host) => {
-        const fullHost = hosts.find((h) => h.id === host.id);
-        if (fullHost) void openSftpHost(fullHost);
       },
       hasActiveSession: () => layoutStore.getState().activeSessionId !== null,
       disconnectActiveSession: () => {
@@ -1031,33 +746,43 @@ function MainApp() {
       },
       openKeyManager: () => setSettingsOpen(true),
       reloadWindow: () => window.location.reload(),
-      openTunnelManager: () => useTunnelStore.getState().openPanel(),
       openTelnetDialog: () => setTelnetDialogOpen(true),
-      openSerialModal: () => { setEditingSerial(null); setSerialModalOpen(true); },
     };
-    const localCommands: Command[] = launchableLocalProfiles.map((profile) => ({
-      id: `local:${profile.id}`,
-      title: `Open local shell: ${profile.name}`,
-      category: "Local",
-      visible: () => true,
-      execute: () => handleConnectLocal(profile),
-    }));
-    return [...createCommands(ctx), ...localCommands];
-  }, [hosts, connectHost, openSftpHost, isBroadcastEnabled, launchableLocalProfiles, handleConnectLocal]);
+    return [...createCommands(ctx), ...getInternalPluginCommands(enabledInternalPluginIds, {
+      getActiveHost: () => {
+        const activeId = layoutStore.getState().activeSessionId;
+        const tab = layoutStore.getState().tabs.find((item) => item.sessionId === activeId);
+        return hosts.find((host) => host.id === tab?.hostId) ?? null;
+      },
+      hostActions: builtinHostActions,
+      openTab,
+      openSecondarySidebar: (pluginId, title) => useSecondarySidebarStore.getState().openBuiltinPlugin({ pluginId, title }),
+      openPanelView: (pluginId, viewId) => useWorkbenchPanelStore.getState().openView(pluginPanelViewId(pluginId, viewId)),
+    })];
+  }, [hosts, connectHost, enabledInternalPluginIds, builtinHostActions, openTab]);
 
   return (
     <>
       <AppShell
+        secondarySidebarOpen={secondarySidebarTarget !== null}
+        secondarySidebarTitle={secondarySidebarTarget ? getPluginSidebarTitle(secondarySidebarTarget) : ""}
+        secondarySidebarContent={secondarySidebarTarget ? (
+          <PluginSecondarySidebarContent target={secondarySidebarTarget} onClose={closeSecondarySidebar} />
+        ) : null}
+        onCloseSecondarySidebar={closeSecondarySidebar}
+        onQuickConnect={() => setIsQuickConnectOpen(true)}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenPlugin={(pluginId, placement, title) => openPlugin(pluginId, placement, undefined, title)}
+        onOpenWorkspaceTargets={openWorkspaceTargets}
         sidebar={
           <Sidebar
             hosts={hosts}
             tags={tags}
             activeSessionHostIds={activeSessionHostIds}
             connectingHostIds={connectingHostIds}
-            lastConnectedAtByHostId={lastConnectedAtByHostId}
             onConnectHost={(host) => { void connectHost(host); }}
-            onOpenSftpHost={(host) => { void openSftpHost(host); }}
-            onOpenConnectionHistory={(host) => setConnectionHistoryHost(host)}
+            builtinHostActions={builtinHostActions}
+            enabledInternalPluginIds={enabledInternalPluginIds}
             onEditHost={(host) => { setEditingHost(host); setHostModalOpen(true); }}
             onNewHost={() => { setEditingHost(null); setHostModalOpen(true); }}
             onDuplicateHost={duplicateHost}
@@ -1065,53 +790,51 @@ function MainApp() {
             onToggleFavoriteHost={toggleFavoriteHost}
             onSetHostColor={setHostColor}
             onReorderHosts={reorderHosts}
-            serialProfiles={serialProfiles}
-            onConnectSerial={connectSerial}
-            onEditSerial={(profile) => { setEditingSerial(profile); setSerialModalOpen(true); }}
-            onNewSerial={() => { setEditingSerial(null); setSerialModalOpen(true); }}
-            onConnectLocal={handleConnectLocal}
-            onNewLocal={handleNewLocalProfile}
-            onEditLocal={handleEditLocalProfile}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenPlugin={openPlugin}
             onOpenTelnet={() => setTelnetDialogOpen(true)}
-            onImportSshConfig={() => setImportModalOpen(true)}
             restoreCount={restoreBannerVisible ? lastWorkspaceTabs.length : undefined}
             onRestore={restoreLastWorkspace}
             onDismissRestore={dismissRestoreBanner}
           />
         }
       >
-        <Workspace
-          availablePorts={availablePorts}
-          onRefreshPorts={refreshPorts}
-          onConnectSsh={connectSshAdHoc}
-          onConnectSerial={connectSerialAdHoc}
-          onConnectLocal={handleConnectLocal}
-        />
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <Workspace
+            onConnectSsh={connectSshAdHoc}
+            enabledInternalPluginIds={enabledInternalPluginIds}
+          />
+        </div>
       </AppShell>
 
-      <QuickConnectDialog
-        open={isQuickConnectOpen}
-        onClose={() => setIsQuickConnectOpen(false)}
-        profiles={profiles}
-        onOpenProfile={(profile) => {
-          if (profile.transport === "serial") {
-            const sp = serialProfiles.find((s) => s.id === profile.id);
-            if (sp) connectSerial(sp);
-          } else {
-            const host = hosts.find((h) => h.id === profile.id);
+      {internalPlugins.filter((plugin) => enabledInternalPluginIds.has(plugin.id)).map((plugin) => {
+          const Contribution = plugin.contribution;
+          return Contribution ? <Contribution key={plugin.id} host={internalPluginUiHostServices} /> : null;
+        })}
+
+      <DeferredMount active={isQuickConnectOpen}>
+        <QuickConnectDialog
+          open={isQuickConnectOpen}
+          onClose={() => setIsQuickConnectOpen(false)}
+          profiles={profiles}
+          onOpenProfile={(profile) => {
+            if (openInternalPluginQuickConnectProfile(profile, openTab)) return;
+            const host = hosts.find((item) => item.id === profile.id);
             if (host) void connectHost(host);
-          }
-        }}
-      />
+          }}
+        />
+      </DeferredMount>
 
-      <CommandPalette commands={paletteCommands} />
+      <DeferredMount active={isCommandPaletteOpen}>
+        <CommandPalette commands={paletteCommands} />
+      </DeferredMount>
 
-      <TelnetQuickConnect
-        open={telnetDialogOpen}
-        onClose={() => setTelnetDialogOpen(false)}
-        onConnect={connectTelnet}
-      />
+      <DeferredMount active={telnetDialogOpen}>
+        <TelnetQuickConnect
+          open={telnetDialogOpen}
+          onClose={() => setTelnetDialogOpen(false)}
+          onConnect={connectTelnet}
+        />
+      </DeferredMount>
 
       <ConnectionChallengeDialogs />
 
@@ -1120,252 +843,44 @@ function MainApp() {
         onClose={() => setHostModalOpen(false)}
         title={editingHost ? `Edit ${editingHost.name}` : "New Host"}
       >
-        <HostForm
-          key={editingHost?.id ?? "new"}
-          initialValue={editingHost ?? undefined}
-          submitLabel={editingHost ? "Update host" : "Add host"}
-          onTagsChanged={(updatedTags) => setTags(updatedTags)}
-          onSubmit={(value: HostFormValue) => {
-            const id = editingHost?.id ?? `host-${Date.now()}`;
-            const normalizedEnvVars = normalizeHostEnvVars(value.envVars);
-            const normalizedTagIds = Array.from(new Set(value.tagIds ?? []));
-            const isDuplicate = !editingHost && hosts.some(
-              (h) => h.name === value.name || (h.hostname === value.hostname && h.port === value.port)
-            );
-            if (isDuplicate) {
-              setHostModalOpen(false);
-              return;
-            }
-            const record: HostRecord = {
-              id,
-              ...value,
-              tagIds: normalizedTagIds,
-              envVars: normalizedEnvVars,
-            };
-            const nowIso = new Date().toISOString();
-            const sanitizedRecord: HostRecord = {
-              ...record,
-              password: "",
-              savePassword: false,
-              clearSavedPassword: false,
-              hasSavedPassword:
-                record.authMethod === "password"
-                  ? record.clearSavedPassword
-                    ? false
-                    : record.savePassword
-                      ? true
-                      : record.hasSavedPassword
-                  : false,
-              passwordSavedAt:
-                record.authMethod === "password"
-                  ? record.clearSavedPassword
-                    ? null
-                    : record.savePassword && (record.password ?? "").trim().length > 0
-                      ? nowIso
-                      : record.passwordSavedAt ?? null
-                  : null
-            };
-            if (editingHost) {
-              setHosts((prev) =>
-                prev.map((h) => (h.id === id ? sanitizedRecord : h))
+        <DeferredMount active={hostModalOpen}>
+          {HostEditor && <HostEditor
+            key={editingHost?.id ?? "new"}
+            initialValue={editingHost ?? undefined}
+            submitLabel={editingHost ? "Update host" : "Add host"}
+            host={internalPluginUiHostServices}
+            onTagsChanged={(updatedTags: TagRecord[]) => setTags(updatedTags)}
+            onSubmit={(value: HostFormValue) => {
+              const id = editingHost?.id ?? `host-${Date.now()}`;
+              const isDuplicate = !editingHost && hosts.some(
+                (host) => host.name === value.name ||
+                  (host.hostname === value.hostname && host.port === value.port)
               );
-            } else {
-              setHosts((prev) => [...prev, sanitizedRecord]);
-            }
-            void persistHost(record).then(async (persisted) => {
-              if (!persisted) {
+              if (isDuplicate) {
+                setHostModalOpen(false);
                 return;
               }
-              if (hasShell()) {
-                try {
-                  await getShell().replaceHostEnvVars({
-                    hostId: id,
-                    envVars: normalizedEnvVars.map((item) => ({
-                      id: item.id,
-                      name: item.name,
-                      value: item.value,
-                      isEnabled: item.isEnabled,
-                      sortOrder: item.sortOrder,
-                    })),
-                  });
-                } catch (error) {
-                  console.warn("[hypershell] failed to persist host env vars:", error);
-                }
-              }
 
-              let persistedHostTags: TagRecord[] = [];
-              if (hasShell()) {
-                try {
-                  persistedHostTags = await getShell().tagsSetHostTags({
-                    hostId: id,
-                    tagIds: normalizedTagIds,
-                  });
-                } catch (error) {
-                  console.warn("[hypershell] failed to persist host tags:", error);
-                }
-              }
+              const record = hostEditorContribution?.createRecord?.(value, id) as HostRecord | undefined;
+              const persistRecord = hostEditorContribution?.persistRecord;
+              if (!record || !persistRecord) return;
 
-              const persistedTagIds = persistedHostTags.map((tag) => tag.id);
-              const persistedTagText = persistedHostTags
-                .map((tag) => tag.name)
-                .join(", ");
-
-              setHosts((prev) =>
-                prev.map((h) =>
-                  h.id === id
-                    ? {
-                        ...persisted,
-                        envVars: normalizedEnvVars,
-                        tagIds:
-                          persistedTagIds.length > 0
-                            ? persistedTagIds
-                            : normalizedTagIds,
-                        tags:
-                          persistedTagText.length > 0
-                            ? persistedTagText
-                            : value.tags,
-                      }
-                    : h
-                )
-              );
-            });
-            setHostModalOpen(false);
-          }}
-        />
-      </Modal>
-
-      <SshConfigImportDialog
-        open={importModalOpen}
-        onClose={() => setImportModalOpen(false)}
-        onImport={(items: SshConfigImportItem[]) => {
-          const newHosts = items.map((item, i) => ({
-            id: `imported-${Date.now()}-${i}`,
-            name: item.alias,
-            hostname: item.hostName ?? item.alias,
-            port: item.port ?? 22,
-            username: item.user ?? "",
-            identityFile: "",
-            envVars: [],
-            group: "Imported",
-            tags: "ssh-config",
-            tagIds: [],
-            authMethod: "default" as const,
-            agentKind: "system" as const,
-            opReference: "",
-            proxyJump: "",
-            proxyJumpHostIds: "",
-            keepAliveInterval: "",
-            autoReconnect: false,
-            reconnectMaxAttempts: DEFAULT_RECONNECT_MAX_ATTEMPTS,
-            reconnectBaseInterval: DEFAULT_RECONNECT_BASE_INTERVAL,
-            tmuxDetect: false,
-            shellIntegration: true,
-          }));
-          setHosts((prev) => [...prev, ...newHosts]);
-          for (const host of newHosts) {
-            void persistHost(host);
-          }
-          setImportModalOpen(false);
-        }}
-      />
-
-      <PuttyImportDialog
-        open={puttyImportOpen}
-        onClose={() => setPuttyImportOpen(false)}
-        onImport={(sessions: PuttySession[]) => {
-          const newHosts = sessions.map((session, i) => ({
-            id: `putty-${Date.now()}-${i}`,
-            name: session.name,
-            hostname: session.hostname,
-            port: session.port,
-            username: session.username || "",
-            identityFile: session.keyFile || "",
-            envVars: [],
-            group: "PuTTY Import",
-            tags: "putty",
-            tagIds: [],
-            authMethod: "default" as const,
-            agentKind: "system" as const,
-            opReference: "",
-            proxyJump: "",
-            proxyJumpHostIds: "",
-            keepAliveInterval: "",
-            autoReconnect: false,
-            reconnectMaxAttempts: DEFAULT_RECONNECT_MAX_ATTEMPTS,
-            reconnectBaseInterval: DEFAULT_RECONNECT_BASE_INTERVAL,
-            tmuxDetect: false,
-            shellIntegration: true,
-          }));
-          setHosts((prev) => [...prev, ...newHosts]);
-          for (const host of newHosts) {
-            void persistHost(host);
-          }
-          setPuttyImportOpen(false);
-          toast.success(`Imported ${newHosts.length} PuTTY session${newHosts.length === 1 ? "" : "s"}`);
-        }}
-      />
-
-      <SshManagerImportDialog
-        open={sshManagerImportOpen}
-        onClose={() => setSshManagerImportOpen(false)}
-        onImported={() => {
-          setSshManagerImportOpen(false);
-          void Promise.all([loadHosts(), loadTags()]).then(
-            async ([loadedHosts, loadedTags]) => {
-              const hostsWithTags = await attachHostTags(loadedHosts);
-              setHosts(hostsWithTags);
-              setTags(loadedTags);
-            }
-          );
-        }}
-      />
-
-
-      <Modal
-        open={serialModalOpen}
-        onClose={() => setSerialModalOpen(false)}
-        title={editingSerial ? `Edit ${editingSerial.name}` : "New Serial Profile"}
-      >
-        <SerialProfileForm
-          key={editingSerial?.id ?? "new-serial"}
-          initialValue={toSerialFormInitialValue(editingSerial)}
-          submitLabel={editingSerial ? "Update profile" : "Add profile"}
-          availablePorts={availablePorts}
-          onRefreshPorts={refreshPorts}
-          onSubmit={(value: SerialProfileFormValue) => {
-            const id = editingSerial?.id ?? `serial-${Date.now()}`;
-            const record: SerialProfileRecord = {
-              id,
-              ...value,
-              notes: null
-            };
-            if (editingSerial) {
-              setSerialProfiles((prev) =>
-                prev.map((p) => (p.id === id ? record : p))
-              );
-            } else {
-              setSerialProfiles((prev) => [...prev, record]);
-            }
-            void persistSerialProfile(record);
-            setSerialModalOpen(false);
-          }}
-        />
-      </Modal>
-
-      <Modal
-        open={localProfileModalOpen}
-        onClose={() => setLocalProfileModalOpen(false)}
-        title={editingLocalProfile ? `Edit ${editingLocalProfile.name}` : "New Local Profile"}
-      >
-        <LocalProfileForm
-          key={editingLocalProfile?.id ?? "new-local"}
-          profile={editingLocalProfile}
-          envVars={editingLocalProfileEnvVars}
-          envVarsLoaded={editingLocalProfileEnvVarsLoaded}
-          onSave={() => setLocalProfileModalOpen(false)}
-          onCancel={() => setLocalProfileModalOpen(false)}
-          onDelete={() => setLocalProfileModalOpen(false)}
-        />
+              setHosts((previous) => editingHost
+                ? previous.map((host) => host.id === id ? record : host)
+                : [...previous, record]);
+              void persistRecord(record, internalPluginUiHostServices, {
+                persistRelatedData: true,
+              }).then((persistedValue) => {
+                const persisted = persistedValue as HostRecord | null;
+                if (!persisted) return;
+                setHosts((previous) => previous.map((host) =>
+                  host.id === id ? persisted : host
+                ));
+              });
+              setHostModalOpen(false);
+            }}
+          />}
+        </DeferredMount>
       </Modal>
 
       <Modal
@@ -1373,27 +888,24 @@ function MainApp() {
         onClose={() => setSettingsOpen(false)}
         title="Settings"
       >
+        <DeferredMount active={settingsOpen}>
         <SettingsPanel
-          onImportSshConfig={() => setImportModalOpen(true)}
-          onImportPutty={() => setPuttyImportOpen(true)}
-          onImportSshManager={() => setSshManagerImportOpen(true)}
+          enabledPluginIds={enabledInternalPluginIds}
+          host={internalPluginUiHostServices}
         />
+        </DeferredMount>
       </Modal>
 
-      <ConnectionHistoryDialog
-        open={connectionHistoryHost !== null}
-        host={connectionHistoryHost}
-        onClose={() => setConnectionHistoryHost(null)}
-      />
+      <DeferredMount active={sessionRecoveryOpen}>
+        <SessionRecoveryDialog
+          open={sessionRecoveryOpen}
+          sessions={savedRecoverySessions}
+          onRestore={restoreSavedSessions}
+          onDismiss={dismissSavedSessionRecovery}
+        />
+      </DeferredMount>
 
-      <SessionRecoveryDialog
-        open={sessionRecoveryOpen}
-        sessions={savedRecoverySessions}
-        onRestore={restoreSavedSessions}
-        onDismiss={dismissSavedSessionRecovery}
-      />
-
-      <TransferPopup />
+      <InternalPluginOverlays enabledPluginIds={enabledInternalPluginIds} />
 
       <Toaster
         position="bottom-right"
@@ -1408,10 +920,31 @@ function MainApp() {
 export function App() {
   const params = new URLSearchParams(window.location.search);
   const windowType = params.get("window");
-  const sftpSessionId = params.get("sftpSessionId");
-
-  if (windowType === "editor" && sftpSessionId) {
-    return <EditorApp sftpSessionId={sftpSessionId} />;
+  if (windowType === "plugin") {
+    const pluginId = params.get("pluginId");
+    const PluginWindow = pluginId
+      ? internalPlugins.find((plugin) => plugin.id === pluginId)?.windowRenderer
+      : undefined;
+    if (!PluginWindow) {
+      return <main role="alert" className="p-6 text-sm text-text-secondary">Plugin window is unavailable.</main>;
+    }
+    const rawContext = params.get("pluginContext");
+    let context: Record<string, unknown> = {};
+    if (rawContext && rawContext.length <= 8192) {
+      try {
+        const parsed: unknown = JSON.parse(rawContext);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          context = parsed as Record<string, unknown>;
+        }
+      } catch {
+        context = {};
+      }
+    }
+    return (
+      <Suspense fallback={null}>
+        <PluginWindow context={context} host={internalPluginUiHostServices} />
+      </Suspense>
+    );
   }
 
   return <MainApp />;

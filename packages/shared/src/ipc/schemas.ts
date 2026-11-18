@@ -11,6 +11,7 @@ export const DEFAULT_RECONNECT_MAX_ATTEMPTS = 5;
 export const DEFAULT_RECONNECT_BASE_INTERVAL = 1;
 
 export const transportSchema = z.enum(["ssh", "serial", "sftp", "telnet", "local"]);
+export const sessionTransportSchema = z.enum(["ssh", "serial", "telnet", "local"]);
 
 export const localProfileIconSchema = z.enum([
   "powershell",
@@ -39,7 +40,7 @@ export const telnetConnectionOptionsSchema = z.object({
 });
 
 export const openSessionRequestSchema = z.object({
-  transport: transportSchema,
+  transport: sessionTransportSchema,
   profileId: z.string().min(1),
   cols: z.number().int().positive(),
   rows: z.number().int().positive(),
@@ -48,18 +49,13 @@ export const openSessionRequestSchema = z.object({
   reconnectBaseInterval: z.number().int().min(1).max(60).optional(),
   telnetOptions: telnetConnectionOptionsSchema.optional(),
   tmuxAttach: z.boolean().optional(),
-  // Resume an existing Claude Code conversation in this tab. Honoured only when
-  // the resolved local profile has claudeSession set; the renderer never
-  // supplies an executable or raw args, so this stays inside the IPC boundary.
-  claudeResumeSessionId: z.string().uuid().optional(),
+  pluginData: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const openSessionResponseSchema = z.object({
   sessionId: z.string().min(1),
   state: sessionStateSchema,
-  // The Claude session id main assigned (or resumed) for this tab, so the
-  // renderer can persist it against the tab for the next restore.
-  claudeSessionId: z.string().uuid().optional()
+  pluginData: z.record(z.string(), z.unknown()).optional()
 });
 
 export const resizeSessionRequestSchema = z.object({
@@ -86,7 +82,7 @@ export const savedSessionRecordSchema = z.object({
   title: z.string().min(1),
   wasGraceful: z.boolean(),
   savedAt: z.string(),
-  claudeSessionId: z.string().uuid().nullable(),
+  pluginData: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const sessionSaveStateEntrySchema = z.object({
@@ -95,7 +91,7 @@ export const sessionSaveStateEntrySchema = z.object({
   transport: transportSchema,
   profileId: z.string().min(1),
   title: z.string().min(1),
-  claudeSessionId: z.string().uuid().nullable().optional(),
+  pluginData: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const sessionSaveStateRequestSchema = z.object({
@@ -140,13 +136,11 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     sessionId: z.string().min(1),
     name: z.string().min(1).nullable()
   }),
-  // Reports the Claude Code conversation a local tab is currently running, so
-  // a restored tab can reattach to it. Null means the tab stopped running
-  // Claude — a restore must then bring back a plain shell, not a conversation.
   z.object({
-    type: z.literal("claude-session"),
+    type: z.literal("plugin-data"),
     sessionId: z.string().min(1),
-    claudeSessionId: z.string().uuid().nullable()
+    pluginId: z.string().min(1),
+    data: z.record(z.string(), z.unknown()).nullable()
   })
 ]);
 
@@ -182,6 +176,7 @@ export const hostRecordSchema = z.object({
   groupId: z.string().nullable(),
   group: z.string().optional(),
   notes: z.string().nullable(),
+  isFavorite: z.boolean().optional(),
   authMethod: z.enum(["default", "password", "keyfile", "agent", "op-reference"]).optional(),
   agentKind: z.enum(["system", "pageant", "1password"]).optional(),
   opReference: z.string().nullable().optional(),
@@ -336,7 +331,7 @@ export const importSshManagerRequestSchema = z.object({
 export const importSshManagerResponseSchema = z.object({
   importedHosts: z.number().int().min(0),
   importedGroups: z.number().int().min(0),
-  importedSnippets: z.number().int().min(0),
+  snippets: z.array(sshManagerSnippetSchema),
   skippedDuplicates: z.number().int().min(0),
 });
 
@@ -769,40 +764,18 @@ export type SetLocalProfileHiddenRequest = z.infer<typeof setLocalProfileHiddenR
 export type ReorderLocalProfilesRequest = z.infer<typeof reorderLocalProfilesRequestSchema>;
 export type GetLocalProfileEnvVarsRequest = z.infer<typeof getLocalProfileEnvVarsRequestSchema>;
 
-// --- Claude Code session schemas ---
-
-export const claudeSessionInfoRequestSchema = z.object({
-  sessionId: z.string().uuid(),
-});
-
-export const claudeSessionInfoResponseSchema = z.object({
-  // null when the conversation no longer exists on disk, which means resume
-  // must not be offered.
-  info: z
-    .object({
-      sessionId: z.string().uuid(),
-      title: z.string().nullable(),
-      cwd: z.string().nullable(),
-      lastActiveAt: z.string(),
-    })
-    .nullable(),
-});
-
-export type ClaudeSessionInfoRequest = z.infer<typeof claudeSessionInfoRequestSchema>;
-export type ClaudeSessionInfoResponse = z.infer<typeof claudeSessionInfoResponseSchema>;
-
 // --- Workspace schemas ---
 
 export const workspaceTabSchema = z.object({
   transport: transportSchema,
   profileId: z.string().min(1),
   title: z.string(),
-  type: z.enum(["terminal", "sftp"]).optional(),
+  // `sftp` is retained for older saved layouts; plugin views are never restored.
+  type: z.enum(["terminal", "plugin", "sftp"]).optional(),
   hostId: z.string().optional(),
   fontSize: z.number().min(8).max(32).multipleOf(0.5).optional(),
-  // Optional so workspaces saved before this feature still parse.
-  claudeSessionId: z.string().uuid().optional(),
-});
+  pluginData: z.record(z.string(), z.unknown()).optional(),
+}).passthrough();
 
 export const workspaceLayoutSchema = z.object({
   tabs: z.array(workspaceTabSchema),
@@ -829,6 +802,13 @@ export const workspaceRecordSchema = z.object({
   layout: workspaceLayoutSchema,
   updatedAt: z.string(),
 });
+
+export const internalPluginInvokeRequestSchema = z.object({
+  pluginId: z.string().regex(/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/).max(80),
+  method: z.string().regex(/^[a-z][a-zA-Z0-9.-]*$/).max(80),
+  payload: z.unknown(),
+}).strict();
+export type InternalPluginInvokeRequest = z.infer<typeof internalPluginInvokeRequestSchema>;
 
 export type WorkspaceTab = z.infer<typeof workspaceTabSchema>;
 export type WorkspaceLayout = z.infer<typeof workspaceLayoutSchema>;
@@ -923,35 +903,12 @@ export type OpGetItemFieldsRequest = z.infer<typeof opGetItemFieldsRequestSchema
 export const opGetItemFieldsResponseSchema = z.array(opFieldSchema);
 export type OpGetItemFieldsResponse = z.infer<typeof opGetItemFieldsResponseSchema>;
 
-// --- Snippet schemas ---
-
-export const snippetRecordSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  body: z.string(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-
-export const upsertSnippetRequestSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  body: z.string(),
-});
-
-export const removeSnippetRequestSchema = z.object({
-  id: z.string().min(1),
-});
-
-export type SnippetRecord = z.infer<typeof snippetRecordSchema>;
-export type UpsertSnippetRequest = z.infer<typeof upsertSnippetRequestSchema>;
-export type RemoveSnippetRequest = z.infer<typeof removeSnippetRequestSchema>;
-
 // --- Session logging schemas ---
 
 export const startLoggingRequestSchema = z.object({
   sessionId: z.string().min(1),
-  filePath: z.string().min(1),
+  filePath: z.string().min(1).optional(),
+  sessionName: z.string().trim().min(1).max(160).optional(),
 });
 
 export const stopLoggingRequestSchema = z.object({
@@ -994,6 +951,7 @@ export const sessionRecordingRecordSchema = z.object({
   hostId: z.string().nullable(),
   title: z.string().min(1),
   fileName: z.string().min(1),
+  filePath: z.string().nullable().optional(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   startedAt: z.string(),
@@ -1007,6 +965,7 @@ export const sessionRecordingRecordSchema = z.object({
 export const startRecordingRequestSchema = z.object({
   sessionId: z.string().min(1),
   hostId: z.string().nullable().optional(),
+  sessionName: z.string().trim().min(1).max(160).optional(),
   title: z.string().min(1).optional(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
@@ -1065,37 +1024,6 @@ export type ExportRecordingRequest = z.infer<typeof exportRecordingRequestSchema
 export type DeleteRecordingResponse = z.infer<typeof deleteRecordingResponseSchema>;
 export type ExportRecordingResponse = z.infer<typeof exportRecordingResponseSchema>;
 export type RecordingFramesResponse = z.infer<typeof recordingFramesResponseSchema>;
-
-// --- Connection history schemas ---
-
-export const connectionHistoryRecordSchema = z.object({
-  id: z.string().min(1),
-  hostId: z.string().nullable(),
-  hostName: z.string().nullable(),
-  connectedAt: z.string(),
-  disconnectedAt: z.string().nullable(),
-  wasSuccessful: z.boolean(),
-  errorMessage: z.string().nullable(),
-});
-
-export const connectionHistoryListByHostRequestSchema = z.object({
-  hostId: z.string().min(1),
-  limit: z.number().int().min(1).max(1000).optional(),
-});
-
-export const connectionHistoryListRecentRequestSchema = z
-  .object({
-    limit: z.number().int().min(1).max(1000).optional(),
-  })
-  .default({});
-
-export type ConnectionHistoryRecord = z.infer<typeof connectionHistoryRecordSchema>;
-export type ConnectionHistoryListByHostRequest = z.infer<
-  typeof connectionHistoryListByHostRequestSchema
->;
-export type ConnectionHistoryListRecentRequest = z.infer<
-  typeof connectionHistoryListRecentRequestSchema
->;
 
 // --- Host fingerprint schemas ---
 
@@ -1172,6 +1100,66 @@ export type RestoreBackupResponse = z.infer<typeof restoreBackupResponseSchema>;
 export type BackupInfo = z.infer<typeof backupInfoSchema>;
 export type ListBackupsResponse = z.infer<typeof listBackupsResponseSchema>;
 
+// Generic filesystem capabilities shared by the host and unrelated plugins.
+export const fsListRequestSchema = z.object({ path: z.string() });
+export type FsListRequest = z.infer<typeof fsListRequestSchema>;
+
+export const fsEntrySchema = z.object({
+  name: z.string(),
+  path: z.string(),
+  size: z.number(),
+  modifiedAt: z.string(),
+  isDirectory: z.boolean(),
+});
+export type FsEntry = z.infer<typeof fsEntrySchema>;
+
+export const fsListResponseSchema = z.object({
+  entries: z.array(fsEntrySchema),
+  error: z.enum(["permission-denied"]).optional(),
+});
+export type FsListResponse = z.infer<typeof fsListResponseSchema>;
+
+export const fsGetDrivesResponseSchema = z.object({ drives: z.array(z.string()) });
+export type FsGetDrivesResponse = z.infer<typeof fsGetDrivesResponseSchema>;
+
+export const fsPathRequestSchema = z.object({ path: z.string() });
+export type FsPathRequest = z.infer<typeof fsPathRequestSchema>;
+
+export const fsCopyRequestSchema = z.object({
+  paths: z.array(z.string()).min(1),
+  targetDirectory: z.string(),
+});
+export type FsCopyRequest = z.infer<typeof fsCopyRequestSchema>;
+
+export const fsRenameRequestSchema = z.object({
+  oldPath: z.string(),
+  newPath: z.string(),
+});
+export type FsRenameRequest = z.infer<typeof fsRenameRequestSchema>;
+
+export const fsDialogFilterSchema = z.object({
+  name: z.string(),
+  extensions: z.array(z.string()),
+});
+export type FsDialogFilter = z.infer<typeof fsDialogFilterSchema>;
+
+export const fsShowSaveDialogRequestSchema = z.object({
+  defaultPath: z.string().optional(),
+  filters: z.array(fsDialogFilterSchema).optional(),
+}).optional();
+export type FsShowSaveDialogRequest = z.infer<typeof fsShowSaveDialogRequestSchema>;
+
+export const fsShowOpenDialogRequestSchema = z.object({
+  title: z.string().optional(),
+  defaultPath: z.string().optional(),
+  filters: z.array(fsDialogFilterSchema).optional(),
+  directory: z.boolean().optional(),
+}).optional();
+export type FsShowOpenDialogRequest = z.infer<typeof fsShowOpenDialogRequestSchema>;
+
+export const fsDialogPathResponseSchema = z.string().nullable();
+export type FsDialogPathResponse = z.infer<typeof fsDialogPathResponseSchema>;
+
 // --- Tmux ---
 
 export const tmuxSessionSchema = z.object({
@@ -1192,3 +1180,25 @@ export const tmuxProbeResponseSchema = z.object({
 export type TmuxSessionIpc = z.infer<typeof tmuxSessionSchema>;
 export type TmuxProbeRequest = z.infer<typeof tmuxProbeRequestSchema>;
 export type TmuxProbeResponse = z.infer<typeof tmuxProbeResponseSchema>;
+
+// Generic plugin editor-window messages. Feature payloads stay opaque to hosts.
+export const editorOpenRequestSchema = z.object({
+  pluginId: z.string().min(1).max(80),
+  windowKey: z.string().min(1),
+  context: z.record(z.unknown()),
+  payload: z.record(z.unknown()),
+});
+export type EditorOpenRequest = z.infer<typeof editorOpenRequestSchema>;
+
+export const editorOpenFileSchema = z.object({
+  pluginId: z.string().min(1).max(80),
+  windowKey: z.string().min(1),
+  payload: z.record(z.unknown()),
+});
+export type EditorOpenFile = z.infer<typeof editorOpenFileSchema>;
+
+export const editorSessionClosedSchema = z.object({
+  pluginId: z.string().min(1).max(80),
+  windowKey: z.string().min(1),
+});
+export type EditorSessionClosed = z.infer<typeof editorSessionClosedSchema>;

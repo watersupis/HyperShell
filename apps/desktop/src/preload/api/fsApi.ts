@@ -5,6 +5,7 @@ import {
   fsListResponseSchema,
   fsPathRequestSchema,
   fsRenameRequestSchema,
+  fsCopyRequestSchema,
   fsShowSaveDialogRequestSchema,
   fsShowOpenDialogRequestSchema,
   fsDialogPathResponseSchema,
@@ -30,6 +31,7 @@ export interface FsApi {
   fsShowInFolder(request: { path: string }): Promise<void>;
   fsTrash(request: { path: string }): Promise<void>;
   fsRename(request: { oldPath: string; newPath: string }): Promise<void>;
+  fsCopy(request: { paths: string[]; targetDirectory: string }): Promise<void>;
 }
 
 const fsGetHomeResponseSchema = z.object({ path: z.string() });
@@ -87,6 +89,10 @@ export function createFsApi(
     async fsRename(request: { oldPath: string; newPath: string }): Promise<void> {
       const parsed = fsRenameRequestSchema.parse(request);
       await ipcRenderer.invoke(ipcChannels.fs.rename, parsed);
+    },
+    async fsCopy(request: { paths: string[]; targetDirectory: string }): Promise<void> {
+      const parsed = fsCopyRequestSchema.parse(request);
+      await ipcRenderer.invoke(ipcChannels.fs.copy, parsed);
     },
   };
 }

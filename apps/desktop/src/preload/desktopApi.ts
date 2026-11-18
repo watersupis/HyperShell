@@ -15,11 +15,12 @@ import { createUpdateApi, type UpdateApi } from "./api/updateApi";
 import { createSystemApi, type SystemApi } from "./api/systemApi";
 import { createLocalApi, type LocalApi } from "./api/localApi";
 import { createFilesApi, type FilesApi, type FilePathResolver } from "./api/filesApi";
+import { createPluginsApi, type PluginsApi } from "./api/pluginsApi";
 
 export type { PreloadIpcRenderer, PreloadLogger } from "./api/types";
 export type { FilePathResolver } from "./api/filesApi";
 
-export interface DesktopApi extends SessionApi, HostsApi, SftpApi, GroupsTagsApi, HostProfilesApi, SerialApi, FsApi, WorkspaceApi, SshKeysApi, PortForwardApi, RecordingApi, SettingsApi, UpdateApi, SystemApi, LocalApi, FilesApi {}
+export interface DesktopApi extends SessionApi, HostsApi, SftpApi, GroupsTagsApi, HostProfilesApi, SerialApi, FsApi, WorkspaceApi, SshKeysApi, PortForwardApi, RecordingApi, SettingsApi, UpdateApi, SystemApi, LocalApi, FilesApi, PluginsApi {}
 
 export function createDesktopApi(
   ipcRenderer: PreloadIpcRenderer,
@@ -43,5 +44,6 @@ export function createDesktopApi(
     ...createSystemApi(ipcRenderer, logger),
     ...createLocalApi(ipcRenderer, logger),
     ...createFilesApi(filePathResolver),
+    ...createPluginsApi(ipcRenderer, logger),
   };
 }

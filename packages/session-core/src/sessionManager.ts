@@ -1,21 +1,15 @@
 import type {
-  OpenSessionRequest,
   SessionState,
   SessionTransportEvent,
   SessionTransportKind,
+  LocalConnectionOptions,
   SshConnectionOptions,
   SerialConnectionOptions,
   TelnetConnectionOptions,
-  LocalConnectionOptions,
+  SessionTransportFactory,
   TransportHandle
 } from "./transports/transportEvents";
 import { DEFAULT_RECONNECT_BASE_INTERVAL } from "@hypershell/shared";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { createSerialTransport } from "./transports/serialTransport";
-import { createSshPtyTransport, buildSshPtyCommand } from "./transports/sshPtyTransport";
-import { createTelnetTransport } from "./transports/telnetTransport";
-import { createLocalShellTransport } from "./transports/localShellTransport";
 import type { NetworkMonitor } from "./networkMonitor";
 import type { ProcessTitlePoller } from "./processTitle/processTitlePoller";
 import {
@@ -25,8 +19,6 @@ import {
   SHELL_INTEGRATION_PROBE_MARKER
 } from "./shellIntegration/bootstrap";
 import { isAutomaticTerminalReply } from "./shellIntegration/terminalReplies";
-
-const execFileAsync = promisify(execFile);
 
 export interface SessionSnapshot {
   sessionId: string;
@@ -41,7 +33,8 @@ export interface SessionSnapshot {
 }
 
 export interface SessionManagerDeps {
-  createTransport?: (request: OpenSessionRequest) => TransportHandle;
+  createTransport?: SessionTransportFactory;
+  executeCommand?: SessionCommandExecutor;
   sessionIdFactory?: () => string;
   networkMonitor?: NetworkMonitor;
   processTitlePoller?: ProcessTitlePoller;
@@ -72,6 +65,12 @@ export interface ExecCommandOptions {
   timeoutMs?: number;
 }
 
+export type SessionCommandExecutor = (
+  input: OpenSessionInput,
+  command: string,
+  options?: ExecCommandOptions
+) => Promise<string>;
+
 export interface SessionManager {
   open(input: OpenSessionInput): OpenSessionResult;
   write(sessionId: string, data: string): void;
@@ -94,10 +93,9 @@ export interface SessionManager {
 //   probing         quiet + prompt-shaped tail → write the one-row probe
 //   awaiting-probe  the probe's marker bytes prove a shell executed it;
 //                   no marker in time → retry the probe (bounded), then give up
-//   injecting       shell is provably at a prompt → write the real bootstrap,
-//                   whose echo is now single and whose self-erase is sized right
-//   done            installed, given up, or not applicable
-type BootstrapPhase = "probing" | "awaiting-probe" | "injecting" | "done";
+//   done            installed, given up, or not applicable; a confirmed probe
+//                   queues the bootstrap immediately with tty echo disabled
+type BootstrapPhase = "probing" | "awaiting-probe" | "done";
 
 interface ManagedSession {
   snapshot: SessionSnapshot;
@@ -145,92 +143,6 @@ const SHELL_INTEGRATION_PROBE_TIMEOUT_MS = 2_000;
 // leaves a one-line scar. Giving up degrades to OSC-only titles.
 const SHELL_INTEGRATION_MAX_PROBE_ATTEMPTS = 3;
 
-function createNoopTransport(sessionId: string): TransportHandle {
-  const listeners = new Set<(event: SessionTransportEvent) => void>();
-
-  return {
-    write() {},
-    resize() {},
-    close() {
-      for (const listener of listeners) {
-        listener({
-          type: "exit",
-          sessionId,
-          exitCode: null
-        });
-      }
-    },
-    onEvent(listener) {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    }
-  };
-}
-
-function createDefaultTransport(request: OpenSessionRequest): TransportHandle {
-  if (request.transport === "ssh") {
-    const opts = request.sshOptions ?? { hostname: request.profileId };
-    return createSshPtyTransport(request, {
-      hostname: opts.hostname,
-      username: opts.username,
-      port: opts.port,
-      identityFile: opts.identityFile,
-      password: opts.password,
-      proxyJump: opts.proxyJump,
-      keepAliveSeconds: opts.keepAliveSeconds,
-      envVars: opts.envVars
-    });
-  }
-
-  if (request.transport === "serial") {
-    const opts = request.serialOptions ?? { path: request.profileId };
-    return createSerialTransport(request, {
-      path: opts.path,
-      baudRate: opts.baudRate,
-      dataBits: opts.dataBits,
-      stopBits: opts.stopBits,
-      parity: opts.parity,
-      flowControl: opts.flowControl,
-      localEcho: opts.localEcho,
-      dtr: opts.dtr,
-      rts: opts.rts
-    });
-  }
-
-  if (request.transport === "local") {
-    // No fallback here on purpose. Every other transport can degrade to
-    // "treat profileId as the target", but for local shells profileId comes
-    // from the renderer and the target is a process to spawn — the main
-    // process resolving it against the profile store is the whole security
-    // boundary. Refuse rather than spawn an unresolved string.
-    if (!request.localOptions) {
-      throw new Error("local transport requires resolved localOptions");
-    }
-
-    const opts = request.localOptions;
-    return createLocalShellTransport(request, {
-      executable: opts.executable,
-      args: opts.args,
-      cwd: opts.cwd,
-      envVars: opts.envVars
-    });
-  }
-
-  if (request.transport === "telnet") {
-    const opts = request.telnetOptions ?? { hostname: request.profileId, port: 23, mode: "telnet" as const };
-    return createTelnetTransport(request, {
-      hostname: opts.hostname,
-      port: opts.port,
-      mode: opts.mode,
-      terminalType: opts.terminalType,
-    });
-  }
-
-  return createNoopTransport(request.sessionId);
-}
-
 export function createSessionManager(
   deps: SessionManagerDeps = {}
 ): SessionManager {
@@ -239,7 +151,9 @@ export function createSessionManager(
   let nextSessionId = 1;
   const sessionIdFactory =
     deps.sessionIdFactory ?? (() => `session-${nextSessionId++}`);
-  const createTransport = deps.createTransport ?? createDefaultTransport;
+  const createTransport = deps.createTransport ?? (() => {
+    throw new Error("No session transport factory configured");
+  });
   const networkMonitor = deps.networkMonitor;
   const processTitlePoller = deps.processTitlePoller;
 
@@ -366,10 +280,6 @@ export function createSessionManager(
         return;
       }
 
-      if (current.bootstrapPhase === "injecting") {
-        current.bootstrapPhase = "done";
-        current.transport.write(buildShellIntegrationBootstrap(current.snapshot.cols));
-      }
     }, SHELL_INTEGRATION_QUIET_MS);
   }
 
@@ -495,11 +405,11 @@ export function createSessionManager(
           session.bootstrapTail.includes(SHELL_INTEGRATION_PROBE_MARKER)
         ) {
           // Marker bytes prove a shell executed the probe at a prompt — the
-          // real bootstrap can now be typed with a single, erasable echo.
+          // real bootstrap is queued immediately while tty echo is disabled.
           clearBootstrapProbeTimer(session);
-          session.bootstrapPhase = "injecting";
-          session.bootstrapQuietRounds = 0;
-          scheduleShellIntegrationWrite(sessionId);
+          session.bootstrapPhase = "done";
+          clearBootstrapTimer(session);
+          session.transport.write(buildShellIntegrationBootstrap(session.snapshot.cols));
         } else if (session.bootstrapTimer !== null) {
           // A pending write means the session isn't quiet yet — push it out.
           scheduleShellIntegrationWrite(sessionId);
@@ -791,24 +701,10 @@ export function createSessionManager(
     execCommand(sessionId: string, command: string, options: ExecCommandOptions = {}): Promise<string> {
       const session = sessions.get(sessionId);
       if (!session) return Promise.reject(new Error("Session not found"));
-      const opts = session.input.sshOptions;
-      if (!opts) return Promise.reject(new Error("Not an SSH session"));
-
-      const { command: sshBin, args } = buildSshPtyCommand({
-        hostname: opts.hostname,
-        username: opts.username,
-        port: opts.port,
-        identityFile: opts.identityFile,
-        proxyJump: opts.proxyJump,
-        keepAliveSeconds: opts.keepAliveSeconds,
-        requestTty: false,
-        extraArgs: ["-o", "BatchMode=yes"]
-      });
-      args.push(command);
-
-      const timeoutMs = options.timeoutMs ?? 10_000;
-      return execFileAsync(sshBin, args, { timeout: timeoutMs, windowsHide: true })
-        .then(({ stdout }) => stdout);
+      if (!deps.executeCommand) {
+        return Promise.reject(new Error(`No command executor registered for ${session.input.transport} sessions`));
+      }
+      return deps.executeCommand(session.input, command, options);
     }
   };
 }

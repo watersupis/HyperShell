@@ -8,7 +8,7 @@
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
-    "dev": "pnpm run build && electron .",
+    "dev": "pnpm run build:bundle && electron .",
     "dev:native": "pnpm run rebuild:native && pnpm run build && electron .",
     "build": "tsc -p tsconfig.json --noEmit && node esbuild.config.mjs",
     "build:bundle": "pnpm --filter @hypershell/ui run build && pnpm run build && pnpm run sync:renderer",
@@ -30,7 +30,9 @@
     "test:e2e:full": "pnpm run test:e2e"
   },
   "dependencies": {
+    "@hypershell/builtin-runtime": "workspace:*",
     "@hypershell/db": "workspace:^",
+    "@hypershell/plugin-api": "workspace:^",
     "@hypershell/session-core": "workspace:*",
     "@hypershell/shared": "workspace:*",
     "@vscode/windows-process-tree": "^0.8.0",
@@ -39,11 +41,14 @@
     "node-pty": "^1.1.0",
     "serialport": "^12.0.0",
     "ssh2": "^1.17.0",
+    "yauzl": "^3.4.0",
     "yazl": "^3.3.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/ssh2": "^1.15.5",
     "@playwright/test": "^1.61.1",
+    "@types/yauzl": "2.10.3",
     "@types/yazl": "^3.3.1",
     "electron": "^39.8.10",
     "electron-builder": "^26.15.3",

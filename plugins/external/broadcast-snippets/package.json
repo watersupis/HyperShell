@@ -1,0 +1,1 @@
+{ "name": "@hypershell/plugin-quick-command-center", "private": true, "version": "1.0.0", "type": "module", "scripts": { "build": "tsc -p tsconfig.json", "test": "vitest run --config vitest.config.ts" }, "dependencies": { "@hypershell/plugin-api": "workspace:*" } }

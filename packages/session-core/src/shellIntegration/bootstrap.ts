@@ -15,13 +15,8 @@
  * - POSIX-compatible shells that are neither bash nor zsh simply match neither
  *   `VERSION` guard and install nothing; fish and csh will emit a syntax error,
  *   since this line is not valid syntax for them.
- * - It ends with a printf that erases its own echo: by the time the shell runs
- *   the line, the remote tty has already echoed all of it at the prompt, so
- *   the first output the command produces is "cursor up N rows, column 0,
- *   erase to end of screen" — the snippet vanishes and the next prompt draws
- *   where it stood. N comes from the pty width known at injection time; it is
- *   biased high because the prompt length is unknowable from here, and eating
- *   a row of MOTD beats leaving fragments of shell code on screen.
+ * - The probe disables tty echo before the long bootstrap is sent, avoiding
+ *   an unreliable wrapped-line erase based on guessed prompt width.
  */
 const BOOTSTRAP = [
   'if [ -z "${__HS_SI:-}" ]; then',
@@ -29,14 +24,14 @@ const BOOTSTRAP = [
   'if [ -n "${ZSH_VERSION:-}" ]; then',
   'autoload -Uz add-zsh-hook;',
   `__hs_pre() { printf '\\033]0;%s\\007' "\${1%% *}"; };`,
-  `__hs_post() { printf '\\033]0;%s@%s: %s\\007' "\${USER}" "\${HOST%%.*}" "\${PWD/#$HOME/~}"; };`,
+  `__hs_post() { printf '\\033]0;%s@%s: %s\\007' "\${USER}" "\${HOST%%.*}" "\${PWD/#$HOME/~}"; printf '\\033]7;file://%s\\007' "\${PWD}"; };`,
   'add-zsh-hook preexec __hs_pre;',
   'add-zsh-hook precmd __hs_post;',
   'elif [ -n "${BASH_VERSION:-}" ] && [ -z "$(trap -p DEBUG)" ]; then',
   `__hs_pre() { case "$BASH_COMMAND" in __hs_post*) return;; esac; printf '\\033]0;%s\\007' "\${BASH_COMMAND%% *}"; };`,
-  `__hs_post() { printf '\\033]0;%s@%s: %s\\007' "\${USER}" "\${HOSTNAME%%.*}" "\${PWD/#$HOME/~}"; };`,
+  `__hs_post() { printf '\\033]0;%s@%s: %s\\007' "\${USER}" "\${HOSTNAME%%.*}" "\${PWD/#$HOME/~}"; printf '\\033]7;file://%s\\007' "\${PWD}"; };`,
   "trap '__hs_pre' DEBUG;",
-  'PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND;}__hs_post";',
+  'case "$PROMPT_COMMAND" in *"__hs_post"*) ;; *) __hs_prompt_command="$PROMPT_COMMAND"; while [ -n "$__hs_prompt_command" ]; do case "${__hs_prompt_command: -1}" in ";"|[[:space:]]) __hs_prompt_command="${__hs_prompt_command%?}";; *) break;; esac; done; PROMPT_COMMAND="${__hs_prompt_command:+$__hs_prompt_command;}__hs_post"; unset __hs_prompt_command;; esac;',
   'fi;',
   'fi'
 ].join(" ");
@@ -87,11 +82,11 @@ export const SHELL_INTEGRATION_PROBE_MARKER = "\u001b]777;hs-probe\u0007";
  * quiet-window or prompt-shape heuristic can tell those apart from a real
  * prompt. So the big line is only written after this probe's marker bytes come
  * back, which proves a shell is executing typed lines at a prompt. The
- * trailing printf erases the probe's own echoed row (up 2 covers a wrapped
- * echo; one row of over-erase beats leaving the probe visible).
+ * It saves the existing tty mode and disables echo before returning the
+ * marker. The bootstrap restores that exact mode after installing hooks.
  */
 export function buildShellIntegrationProbe(): string {
-  return " printf '\\033]777;hs-probe\\007\\033[2A\\r\\033[J'\r";
+  return " __HS_TTY_STATE=$(stty -g 2>/dev/null); if [ -n \"$__HS_TTY_STATE\" ]; then stty -echo; fi; printf '\\033]777;hs-probe\\007\\033[2A\\r\\033[J'\r";
 }
 
 const DEFAULT_COLS = 80;
@@ -109,12 +104,14 @@ function eraseSuffix(rows: number): string {
 export function buildShellIntegrationBootstrap(cols = DEFAULT_COLS): string {
   const effectiveCols = cols >= MIN_PLAUSIBLE_COLS ? cols : DEFAULT_COLS;
   // Echoed characters: leading space + body + the suffix itself (estimated at
-  // its widest, two row digits). +2 rows absorbs any prompt length: the echo
-  // spans at most floor(length/cols) + 2 rows however far the prompt pushed it.
-  const echoedLength = 1 + BOOTSTRAP.length + eraseSuffix(MAX_ERASE_ROWS).length;
+  // its widest, two row digits). The extra rows absorb prompt width and small
+  // PTY resize races between the renderer's fit and SSH input echo.
+  const restoreTtyMode = '; if [ -n "$__HS_TTY_STATE" ]; then stty "$__HS_TTY_STATE" 2>/dev/null; unset __HS_TTY_STATE; fi';
+  const echoedLength =
+    1 + BOOTSTRAP.length + restoreTtyMode.length + eraseSuffix(MAX_ERASE_ROWS).length;
   const rows = Math.min(
     MAX_ERASE_ROWS,
-    Math.floor(echoedLength / effectiveCols) + 2
+    Math.floor(echoedLength / effectiveCols) + 4
   );
-  return ` ${BOOTSTRAP}${eraseSuffix(rows)}\r`;
+  return ` ${BOOTSTRAP}${restoreTtyMode}${eraseSuffix(rows)}\r`;
 }

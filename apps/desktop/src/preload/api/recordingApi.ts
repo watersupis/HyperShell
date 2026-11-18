@@ -15,9 +15,6 @@ import {
   exportRecordingRequestSchema,
   exportRecordingResponseSchema,
   sessionRecordingRecordSchema,
-  connectionHistoryRecordSchema,
-  connectionHistoryListByHostRequestSchema,
-  connectionHistoryListRecentRequestSchema,
   type StartLoggingRequest,
   type StopLoggingRequest,
   type GetLoggingStateRequest,
@@ -33,9 +30,6 @@ import {
   type RecordingFramesResponse,
   type ExportRecordingRequest,
   type ExportRecordingResponse,
-  type ConnectionHistoryRecord,
-  type ConnectionHistoryListByHostRequest,
-  type ConnectionHistoryListRecentRequest,
 } from "@hypershell/shared";
 import { z } from "zod";
 import type { PreloadIpcRenderer, PreloadLogger } from "./types";
@@ -52,15 +46,7 @@ export interface RecordingApi {
   recordingDelete(request: DeleteRecordingRequest): Promise<DeleteRecordingResponse>;
   recordingGetFrames(request: GetRecordingFramesRequest): Promise<RecordingFramesResponse>;
   recordingExport(request: ExportRecordingRequest): Promise<ExportRecordingResponse>;
-  connectionHistoryListByHost(
-    request: ConnectionHistoryListByHostRequest
-  ): Promise<ConnectionHistoryRecord[]>;
-  connectionHistoryListRecent(
-    request?: ConnectionHistoryListRecentRequest
-  ): Promise<ConnectionHistoryRecord[]>;
 }
-
-const connectionHistoryRecordArraySchema = z.array(connectionHistoryRecordSchema);
 
 export function createRecordingApi(
   ipcRenderer: PreloadIpcRenderer,
@@ -109,24 +95,6 @@ export function createRecordingApi(
     async recordingExport(request: ExportRecordingRequest): Promise<ExportRecordingResponse> {
       const raw = await ipcRenderer.invoke(ipcChannels.recording.export, exportRecordingRequestSchema.parse(request));
       return exportRecordingResponseSchema.parse(raw);
-    },
-    async connectionHistoryListByHost(
-      request: ConnectionHistoryListByHostRequest
-    ): Promise<ConnectionHistoryRecord[]> {
-      const raw = await ipcRenderer.invoke(
-        ipcChannels.connectionHistory.listByHost,
-        connectionHistoryListByHostRequestSchema.parse(request)
-      );
-      return connectionHistoryRecordArraySchema.parse(raw);
-    },
-    async connectionHistoryListRecent(
-      request?: ConnectionHistoryListRecentRequest
-    ): Promise<ConnectionHistoryRecord[]> {
-      const raw = await ipcRenderer.invoke(
-        ipcChannels.connectionHistory.listRecent,
-        connectionHistoryListRecentRequestSchema.parse(request ?? {})
-      );
-      return connectionHistoryRecordArraySchema.parse(raw);
     },
   };
 }

@@ -86,7 +86,8 @@ type HostRow = {
 /**
  * Apply every host-option default in one place. All three host stores — the
  * SQLite repository, the in-memory fallback below, and the JSON-file fallback
- * in apps/desktop hostsIpc.ts — normalize through this function, so each
+ * in apps/desktop/src/main/platform/storage/hostsRepositoryService.ts normalize
+ * through this function, so each
  * default is written exactly once (in HOST_OPTION_DEFAULTS).
  */
 export function normalizeHostInput(input: HostInput): HostRecord {

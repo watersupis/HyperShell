@@ -1,0 +1,1286 @@
+import { createHostsRepositoryFromDatabase } from "@hypershell/db";
+import { createHostFingerprintRepositoryFromDatabase } from "./repositories/hostFingerprintRepository";
+import type { SqliteDatabase } from "@hypershell/db";
+import { createSftpBookmarksRepository } from "./sftpBookmarksRepository";
+import { createSftpOperationLogsRepository } from "./sftpOperationLogsRepository";
+import { app, nativeImage } from "electron";
+import path from "node:path";
+import fs from "node:fs";
+import { pipeline } from "node:stream/promises";
+import { ZipFile } from "yazl";
+import {
+  sftpIpcChannels,
+  sftpBookmarkListRequestSchema,
+  sftpBookmarkRemoveRequestSchema,
+  sftpBookmarkReorderRequestSchema,
+  sftpBookmarkUpsertRequestSchema,
+  sftpConnectRequestSchema,
+  sftpChmodRequestSchema,
+  sftpDeleteRequestSchema,
+  sftpDeleteWithBackupRequestSchema,
+  sftpRestoreDeleteBackupRequestSchema,
+  sftpOperationLogsListRequestSchema,
+  sftpOperationLogAppendRequestSchema,
+  sftpOperationLogsClearRequestSchema,
+  sftpDisconnectRequestSchema,
+  sftpListRequestSchema,
+  sftpMkdirRequestSchema,
+  sftpReadFileRequestSchema,
+  sftpRenameRequestSchema,
+  sftpCopyRequestSchema,
+  sftpStatRequestSchema,
+  sftpTransferCancelRequestSchema,
+  sftpTransferPauseRequestSchema,
+  sftpTransferResolveConflictRequestSchema,
+  sftpTransferResumeRequestSchema,
+  sftpTransferRetryRequestSchema,
+  sftpTransferStartRequestSchema,
+  sftpWriteFileRequestSchema,
+  sftpSyncStartRequestSchema,
+  sftpSyncStopRequestSchema,
+  sftpDragOutRequestSchema,
+  keyboardInteractiveResponseSchema,
+  type SftpEvent,
+  type SftpSyncEvent,
+  type SftpConnectRequest,
+  type SftpConnectResponse,
+  type HostKeyVerificationInfo,
+  type SftpTransferPauseRequest,
+  type SftpTransferResumeRequest,
+  type KeyboardInteractiveRequest,
+} from "@hypershell/plugin-api";
+import { toErrorMessage } from "@hypershell/shared";
+import type {
+  SessionManager,
+  Ssh2ConnectionPool,
+} from "@hypershell/session-core";
+import { probeHostKey } from "./hostKeyProbe";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import type { IpcMainEvent, IpcMainInvokeEvent } from "electron";
+import type { PluginIpcMain } from "@hypershell/plugin-api";
+
+import { createSftpSessionManager } from "./sftp/sftpSessionManager";
+import { createSyncEngine } from "./sftp/syncEngine";
+import type { SftpConnectionOptions, SftpTransportHandle, KeyboardInteractiveCallback } from "./sftp/sftpTransport";
+import { createTransferManager } from "./sftp/transferManager";
+import { createTransferManifest } from "./sftp/transferManifest";
+
+export function resolveSafeDragOutPath(tempDir: string, fileName: string): string {
+  const trimmed = fileName.trim();
+  if (!trimmed) {
+    throw new Error("Invalid drag-out filename");
+  }
+
+  const baseName = path.basename(trimmed);
+  const hasPathSeparators = trimmed.includes(path.posix.sep) || trimmed.includes(path.win32.sep);
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the purpose of this check
+  const hasControlChars = /[\0-\x1f]/.test(trimmed);
+  if (hasPathSeparators || hasControlChars || baseName !== trimmed || baseName === "." || baseName === "..") {
+    throw new Error("Invalid drag-out filename");
+  }
+
+  const resolvedTempDir = path.resolve(tempDir);
+  const resolvedTarget = path.resolve(resolvedTempDir, baseName);
+  if (resolvedTarget !== path.join(resolvedTempDir, baseName)) {
+    throw new Error("Invalid drag-out filename");
+  }
+
+  return resolvedTarget;
+}
+
+/**
+ * Error subclass thrown when host key verification fails. `handleConnect`
+ * catches it and returns the details as a structured `hostKeyVerification`
+ * response field — errors crossing Electron IPC keep only their message, so
+ * the challenge must travel in the response, not in a thrown error.
+ */
+class HostKeyVerificationError extends Error {
+  public readonly info: HostKeyVerificationInfo;
+
+  constructor(info: HostKeyVerificationInfo) {
+    super(
+      `Host key verification failed for ${info.hostname}:${info.port} (${info.verificationStatus})`
+    );
+    this.name = "HostKeyVerificationError";
+    this.info = info;
+  }
+}
+
+/** @internal Extracted for testability. */
+export interface HostFingerprintLookup {
+  findByHost(hostname: string, port: number): Array<{ fingerprint: string; isTrusted: boolean }>;
+  findByHostAndAlgorithm(hostname: string, port: number, algorithm: string): { id?: string; fingerprint: string; isTrusted: boolean } | undefined;
+  upsert(record: { id?: string; hostname: string; port: number; algorithm: string; fingerprint: string }): void;
+}
+
+/**
+ * Verifies a remote host key against known fingerprints.
+ * Throws on new/changed keys or when probe fails with no trusted fallback.
+ * @internal Exported for testing.
+ */
+export async function verifyHostKey(
+  hostname: string,
+  port: number,
+  fingerprintRepo: HostFingerprintLookup,
+  trustedFingerprints: string[],
+): Promise<void> {
+  try {
+    const { algorithm, fingerprint } = await probeHostKey(hostname, port);
+    const existing = fingerprintRepo.findByHostAndAlgorithm(hostname, port, algorithm);
+
+    if (!existing) {
+      throw new HostKeyVerificationError({
+        hostname, port, algorithm, fingerprint, verificationStatus: "new_host",
+      });
+    } else if (
+      existing.fingerprint.length !== fingerprint.length ||
+      !timingSafeEqual(Buffer.from(existing.fingerprint), Buffer.from(fingerprint))
+    ) {
+      throw new HostKeyVerificationError({
+        hostname, port, algorithm, fingerprint,
+        verificationStatus: "key_changed",
+        previousFingerprint: existing.fingerprint,
+      });
+    } else if (!existing.isTrusted) {
+      throw new HostKeyVerificationError({
+        hostname, port, algorithm, fingerprint, verificationStatus: "new_host",
+      });
+    }
+    // Key matches trusted fingerprint — update last_seen
+    fingerprintRepo.upsert({ id: existing.id, hostname, port, algorithm, fingerprint });
+  } catch (error) {
+    if (error instanceof HostKeyVerificationError) {
+      throw error;
+    }
+    if (trustedFingerprints.length === 0) {
+      throw new Error(
+        `Unable to verify host key for ${hostname}:${port} and no previously trusted fingerprints exist`,
+        { cause: error }
+      );
+    }
+    console.warn("[sftp] Host key probe failed, falling back to trusted fingerprints:", (error as Error).message);
+  }
+}
+
+export interface RegisterSftpIpcOptions {
+  db: SqliteDatabase;
+  sessionManager: SessionManager;
+  getUserDataDirectory: () => string;
+  getTemporaryDirectory: () => string;
+  onSessionClosed: (sftpSessionId: string) => void;
+  resolveConnectionOptions: (
+    hostId: string,
+    request: SftpConnectRequest
+  ) => Promise<SftpConnectionOptions | null>;
+  onConnected?: (payload: {
+    sftpSessionId: string;
+    hostId: string;
+    connectionOptions: SftpConnectionOptions;
+  }) => void;
+  emitSftpEvent?: (event: SftpEvent) => void;
+  emitSyncEvent?: (event: SftpSyncEvent) => void;
+  emitKeyboardInteractive?: (request: KeyboardInteractiveRequest) => void;
+  connectionPool?: Ssh2ConnectionPool;
+}
+
+// Singletons created inside registerSftpIpc to avoid import-time side effects.
+
+function resolveHostIdFromRequest(
+  request: { hostId?: string; sessionId?: string },
+  sessionManager: SessionManager
+): string | null {
+  if (request.hostId) {
+    return request.hostId;
+  }
+
+  if (!request.sessionId) {
+    return null;
+  }
+
+  return sessionManager.getSession(request.sessionId)?.profileId ?? null;
+}
+
+
+
+function ensureBookmarkHost(
+  hostId: string,
+  connOpts: SftpConnectionOptions,
+  repo: ReturnType<typeof createHostsRepositoryFromDatabase>
+): void {
+  if (repo.get(hostId)) return;
+  repo.create({
+    id: hostId,
+    name: connOpts.username ? `${connOpts.username}@${connOpts.hostname}` : connOpts.hostname,
+    hostname: connOpts.hostname,
+    port: connOpts.port ?? 22,
+    username: connOpts.username ?? null
+  });
+}
+
+/**
+ * Decide how a remote file crosses the IPC boundary.
+ *
+ * NUL bytes catch obvious binaries, but a latin-1 text file has none — decoding
+ * it as UTF-8 yields U+FFFD replacement characters, and saving that back
+ * silently destroys the original bytes. Anything that is not strictly valid
+ * UTF-8 therefore travels as base64 and opens read-only.
+ */
+export function normalizeFileContent(buffer: Buffer): {
+  content: string;
+  encoding: "utf-8" | "base64";
+} {
+  // Check for null bytes in first 8KB to detect binary content
+  const sample = buffer.subarray(0, 8192);
+  if (sample.includes(0)) {
+    return { content: buffer.toString("base64"), encoding: "base64" };
+  }
+
+  try {
+    const content = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return { content, encoding: "utf-8" };
+  } catch {
+    return { content: buffer.toString("base64"), encoding: "base64" };
+  }
+}
+
+/**
+ * Whether a remote file's current stat differs from what the caller expected
+ * when it read the file — the entire basis of the save-conflict check.
+ *
+ * SFTP v3 `mtime` is whole seconds, so an edit that lands within the same
+ * second as the original and happens to produce the same byte length is
+ * undetectable here. That's inherent to the protocol, not a bug in this
+ * comparison — treat this as a best-effort optimistic-concurrency check,
+ * not an exact one.
+ */
+export function isVersionMismatch(
+  current: { size: number; modifiedAt: string },
+  expected: { size: number; modifiedAt: string }
+): boolean {
+  return current.size !== expected.size || current.modifiedAt !== expected.modifiedAt;
+}
+
+/**
+ * The size/mtime pair a later conditional write compares against, or nulls if
+ * the server won't stat the file.
+ *
+ * Statting is deliberately not fatal here. Read and stat are separate SFTP
+ * permissions, and on a server that grants the first but refuses the second a
+ * fatal stat would make the file impossible to *open* — a strictly worse
+ * outcome than opening it without conflict detection. Nulls flow through to
+ * the renderer, which then omits `expectedSize`/`expectedModifiedAt` and saves
+ * unconditionally.
+ */
+export async function readVersionToken(
+  transport: Pick<SftpTransportHandle, "stat">,
+  remotePath: string
+): Promise<{ size: number | null; modifiedAt: string | null }> {
+  try {
+    const entry = await transport.stat(remotePath);
+    return { size: entry.size, modifiedAt: entry.modifiedAt };
+  } catch {
+    return { size: null, modifiedAt: null };
+  }
+}
+
+function normalizeTransferStatus(status: string): "queued" | "active" | "paused" | "completed" | "failed" {
+  if (
+    status === "queued" ||
+    status === "active" ||
+    status === "paused" ||
+    status === "completed" ||
+    status === "failed"
+  ) {
+    return status;
+  }
+
+  return "active";
+}
+
+function createDragOutTempFileName(fileName: string, cacheKey: string): string {
+  const extension = path.extname(fileName);
+  const stem = extension.length > 0 ? fileName.slice(0, -extension.length) : fileName;
+  const suffix = createHash("sha256").update(cacheKey).digest("hex").slice(0, 12);
+  return `${stem}-${suffix}${extension}`;
+}
+
+export interface SftpDragOutItem {
+  remotePath: string;
+  fileName: string;
+  isDirectory?: boolean;
+}
+
+export interface SftpDragOutSkippedEntry {
+  path: string;
+  reason: string;
+}
+
+export interface StageSftpDragOutItemOptions {
+  transport: Pick<SftpTransportHandle, "createReadStream" | "list">;
+  tempDir: string;
+  cacheKey: string;
+  archiveDirectory?: boolean;
+  item: SftpDragOutItem;
+}
+
+function isPermissionDeniedError(error: unknown): boolean {
+  const maybeError = error as { code?: unknown; message?: unknown };
+  return maybeError.code === 3 || /permission denied/i.test(String(maybeError.message ?? error));
+}
+
+async function stageRemoteFile(
+  transport: Pick<SftpTransportHandle, "createReadStream">,
+  remotePath: string,
+  localPath: string
+): Promise<void> {
+  await fs.promises.mkdir(path.dirname(localPath), { recursive: true });
+  await pipeline(transport.createReadStream(remotePath), fs.createWriteStream(localPath));
+}
+
+async function stageRemoteDirectory(
+  transport: Pick<SftpTransportHandle, "createReadStream" | "list">,
+  remotePath: string,
+  localPath: string,
+  options: {
+    skipPermissionDenied?: boolean;
+    isRoot?: boolean;
+    skippedEntries?: SftpDragOutSkippedEntry[];
+  } = {}
+): Promise<SftpDragOutSkippedEntry[]> {
+  const skippedEntries = options.skippedEntries ?? [];
+  await fs.promises.mkdir(localPath, { recursive: true });
+  let entries: Awaited<ReturnType<Pick<SftpTransportHandle, "list">["list"]>>;
+  try {
+    entries = await transport.list(remotePath);
+  } catch (error) {
+    if (options.skipPermissionDenied && !options.isRoot && isPermissionDeniedError(error)) {
+      skippedEntries.push({ path: remotePath, reason: toErrorMessage(error) });
+      return skippedEntries;
+    }
+    throw error;
+  }
+
+  for (const entry of entries) {
+    const childLocalPath = resolveSafeDragOutPath(localPath, entry.name);
+    if (entry.isDirectory) {
+      await stageRemoteDirectory(transport, entry.path, childLocalPath, {
+        skipPermissionDenied: options.skipPermissionDenied,
+        isRoot: false,
+        skippedEntries,
+      });
+      continue;
+    }
+
+    try {
+      await stageRemoteFile(transport, entry.path, childLocalPath);
+    } catch (error) {
+      if (options.skipPermissionDenied && isPermissionDeniedError(error)) {
+        skippedEntries.push({ path: entry.path, reason: toErrorMessage(error) });
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return skippedEntries;
+}
+
+async function copyRemotePath(
+  transport: Pick<SftpTransportHandle, "list" | "stat" | "mkdir" | "readFile" | "writeFile">,
+  sourcePath: string,
+  destinationPath: string
+): Promise<void> {
+  const source = await transport.stat(sourcePath);
+  if (!source.isDirectory) {
+    await transport.writeFile(destinationPath, await transport.readFile(sourcePath));
+    return;
+  }
+
+  await transport.mkdir(destinationPath);
+  for (const entry of await transport.list(sourcePath)) {
+    await copyRemotePath(transport, entry.path, path.posix.join(destinationPath, entry.name));
+  }
+}
+
+async function writeSkippedEntriesManifest(
+  localDir: string,
+  skippedEntries: SftpDragOutSkippedEntry[]
+): Promise<void> {
+  if (skippedEntries.length === 0) return;
+
+  let manifestPath = resolveSafeDragOutPath(localDir, "HYPERSHELL_SKIPPED_FILES.txt");
+  for (let index = 2; fs.existsSync(manifestPath); index += 1) {
+    manifestPath = resolveSafeDragOutPath(localDir, `HYPERSHELL_SKIPPED_FILES_${index}.txt`);
+  }
+
+  const content = [
+    "Some remote items could not be included in this drag-out archive.",
+    "",
+    ...skippedEntries.map((entry) => `${entry.path}\t${entry.reason}`),
+    "",
+  ].join("\n");
+  await fs.promises.writeFile(manifestPath, content, "utf8");
+}
+
+async function addDirectoryToZip(
+  zipFile: ZipFile,
+  localDir: string,
+  metadataDir: string
+): Promise<void> {
+  const stats = await fs.promises.stat(localDir);
+  zipFile.addEmptyDirectory(`${metadataDir}/`, { mtime: stats.mtime });
+
+  const entries = await fs.promises.readdir(localDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const localPath = path.join(localDir, entry.name);
+    const metadataPath = path.posix.join(metadataDir, entry.name);
+
+    if (entry.isDirectory()) {
+      await addDirectoryToZip(zipFile, localPath, metadataPath);
+      continue;
+    }
+
+    zipFile.addFile(localPath, metadataPath, { compress: false });
+  }
+}
+
+export async function createZipFromDirectory(
+  sourceDir: string,
+  zipPath: string,
+  rootName: string
+): Promise<void> {
+  await fs.promises.rm(zipPath, { recursive: true, force: true });
+  await fs.promises.mkdir(path.dirname(zipPath), { recursive: true });
+
+  const zipFile = new ZipFile();
+  const output = fs.createWriteStream(zipPath);
+  const writeComplete = pipeline(zipFile.outputStream, output);
+
+  await addDirectoryToZip(zipFile, sourceDir, rootName);
+  zipFile.end();
+  await writeComplete;
+}
+
+const DELETE_BACKUP_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+export async function pruneSftpDeleteBackups(rootDir: string, now = Date.now()): Promise<void> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !/^[a-f0-9-]{36}$/i.test(entry.name)) continue;
+    const backupDir = path.join(rootDir, entry.name);
+    try {
+      const metadata = JSON.parse(await fs.promises.readFile(path.join(backupDir, "backup.json"), "utf8")) as { expiresAt?: unknown };
+      if (typeof metadata.expiresAt === "number" && metadata.expiresAt <= now) {
+        await fs.promises.rm(backupDir, { recursive: true, force: true });
+      }
+    } catch {
+      continue;
+    }
+  }
+}
+
+export async function stageSftpDragOutItem({
+  transport,
+  tempDir,
+  cacheKey,
+  archiveDirectory,
+  item,
+}: StageSftpDragOutItemOptions): Promise<string> {
+  await fs.promises.mkdir(tempDir, { recursive: true });
+
+  const safeOriginalPath = resolveSafeDragOutPath(tempDir, item.fileName);
+  const safeOriginalName = path.basename(safeOriginalPath);
+  const uniqueFileName = createDragOutTempFileName(path.basename(safeOriginalPath), cacheKey);
+  const tempPath = resolveSafeDragOutPath(tempDir, uniqueFileName);
+
+  await fs.promises.rm(tempPath, { recursive: true, force: true });
+
+  if (item.isDirectory) {
+    const skippedEntries = await stageRemoteDirectory(transport, item.remotePath, tempPath, {
+      skipPermissionDenied: archiveDirectory,
+      isRoot: true,
+    });
+    if (archiveDirectory) {
+      await writeSkippedEntriesManifest(tempPath, skippedEntries);
+      const zipPath = `${tempPath}.zip`;
+      await createZipFromDirectory(tempPath, zipPath, safeOriginalName);
+      return zipPath;
+    }
+
+    return tempPath;
+  }
+
+  await stageRemoteFile(transport, item.remotePath, tempPath);
+  return tempPath;
+}
+
+export function shouldStartNativeDragOut(
+  request: { isDirectory?: boolean; prepareOnly?: boolean },
+  hadCachedTempPath: boolean
+): boolean {
+  if (request.prepareOnly) return false;
+  if (request.isDirectory && !hadCachedTempPath) return false;
+  return true;
+}
+
+const DRAG_OUT_TEMP_DIR_NAME = "hypershell-drag";
+const DRAG_OUT_STARTUP_TTL_MS = 60 * 60 * 1000; // 1h — drag cache has no long-term value
+const DRAG_OUT_POST_DRAG_DELAY_MS = 5 * 60 * 1000; // 5m
+const DRAG_OUT_ICON_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAADklEQVQ4jWNgGAWDEwAAAhAAATHKfqoAAAAASUVORK5CYII=";
+
+function createDragOutIcon() {
+  return nativeImage.createFromBuffer(Buffer.from(DRAG_OUT_ICON_PNG_BASE64, "base64"));
+}
+
+export async function pruneDragOutCache(
+  tempDir: string,
+  maxAgeMs: number,
+  now = Date.now()
+): Promise<void> {
+  let entries: fs.Dirent[];
+  try {
+    entries = await fs.promises.readdir(tempDir, { withFileTypes: true });
+  } catch {
+    return; // dir missing / unreadable — nothing to prune
+  }
+
+  for (const entry of entries) {
+    const target = path.join(tempDir, entry.name);
+    try {
+      const stats = await fs.promises.stat(target);
+      if (now - stats.mtimeMs < maxAgeMs) continue;
+      await fs.promises.rm(target, { recursive: true, force: true });
+    } catch {
+      // best-effort — skip locked/in-use entries, next startup will retry
+    }
+  }
+}
+
+export function registerSftpIpc(
+  ipcMain: PluginIpcMain,
+  options: RegisterSftpIpcOptions
+): () => void {
+  const sftpSessionManager = createSftpSessionManager();
+  const transferManager = createTransferManager({ autoStart: true, maxConcurrent: 1 });
+  const manifest = createTransferManifest(options.getUserDataDirectory());
+  manifest.prune(7 * 24 * 60 * 60 * 1000); // 7 days
+
+  const db = options.db;
+  const hostsRepo = createHostsRepositoryFromDatabase(db);
+  const bookmarksRepo = createSftpBookmarksRepository(db);
+  const fingerprintRepo = createHostFingerprintRepositoryFromDatabase(db);
+  const operationLogsRepo = createSftpOperationLogsRepository(db);
+  const deleteBackupRoot = path.join(options.getUserDataDirectory(), "sftp-delete-backups");
+  void pruneSftpDeleteBackups(deleteBackupRoot);
+  const backupPruneTimer = setInterval(() => void pruneSftpDeleteBackups(deleteBackupRoot), 60 * 60 * 1000);
+  backupPruneTimer.unref();
+
+  // Drag-out cache: pre-downloaded files keyed by "sessionId:remotePath"
+  const dragCache = new Map<string, string>();
+  const dragStageTasks = new Map<string, Promise<string>>();
+  const dragTempDir = path.join(options.getTemporaryDirectory(), DRAG_OUT_TEMP_DIR_NAME);
+  // Fire-and-forget — never block app startup on (potentially multi-GB) rm.
+  void pruneDragOutCache(dragTempDir, DRAG_OUT_STARTUP_TTL_MS);
+
+  const stageDragOutItemOnce = (
+    cacheKey: string,
+    request: { sftpSessionId: string } & SftpDragOutItem
+  ): Promise<string> => {
+    let stageTask = dragStageTasks.get(cacheKey);
+    if (!stageTask) {
+      const transport = sftpSessionManager.getTransport(request.sftpSessionId);
+      stageTask = stageSftpDragOutItem({
+        transport,
+        tempDir: dragTempDir,
+        cacheKey,
+        archiveDirectory: request.isDirectory,
+        item: request,
+      }).then((stagedPath) => {
+        dragCache.set(cacheKey, stagedPath);
+        return stagedPath;
+      }).finally(() => {
+        dragStageTasks.delete(cacheKey);
+      });
+      dragStageTasks.set(cacheKey, stageTask);
+    }
+
+    return stageTask;
+  };
+
+  // Keyboard-interactive auth relay: pending requests keyed by requestId
+  const pendingKbdInteractive = new Map<string, {
+    resolve: (responses: string[]) => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
+
+  const KEYBOARD_INTERACTIVE_TIMEOUT_MS = 60_000;
+
+  function createKeyboardInteractiveCallback(): KeyboardInteractiveCallback {
+    return (name, instructions, prompts) => {
+      return new Promise<string[]>((resolve, reject) => {
+        const requestId = `kbd-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const timer = setTimeout(() => {
+          pendingKbdInteractive.delete(requestId);
+          reject(new Error("Keyboard-interactive authentication timed out"));
+        }, KEYBOARD_INTERACTIVE_TIMEOUT_MS);
+
+        pendingKbdInteractive.set(requestId, { resolve, reject, timer });
+
+        options.emitKeyboardInteractive?.({
+          requestId,
+          name: name ?? "",
+          instructions: instructions ?? "",
+          prompts,
+        });
+      });
+    };
+  }
+
+  const handleConnect = async (
+    _event: IpcMainInvokeEvent,
+    rawRequest: unknown
+  ) => {
+    const request = sftpConnectRequestSchema.parse(rawRequest);
+    const hostId = resolveHostIdFromRequest(request, options.sessionManager);
+    if (!hostId) {
+      throw new Error("Unable to resolve SFTP host");
+    }
+
+    const connectOptions = await options.resolveConnectionOptions(hostId, request);
+    if (!connectOptions) {
+      throw new Error(`Unable to resolve SFTP connection options for ${hostId}`);
+    }
+
+    // --- Host key verification ---
+    const hostname = connectOptions.hostname;
+    const port = connectOptions.port ?? 22;
+
+    const trustedFingerprints = fingerprintRepo
+      .findByHost(hostname, port)
+      .filter((record) => record.isTrusted)
+      .map((record) => record.fingerprint);
+
+    try {
+      await verifyHostKey(hostname, port, fingerprintRepo, trustedFingerprints);
+    } catch (error) {
+      if (error instanceof HostKeyVerificationError) {
+        // Not a failure — a challenge. The renderer shows the trust dialog
+        // and retries the connect once the fingerprint is trusted.
+        return { hostKeyVerification: error.info } satisfies SftpConnectResponse;
+      }
+      throw error;
+    }
+
+    ensureBookmarkHost(hostId, connectOptions, hostsRepo);
+
+    const sftpSessionId = await sftpSessionManager.connect(hostId, connectOptions, {
+      onKeyboardInteractive: createKeyboardInteractiveCallback(),
+      trustedHostFingerprints: trustedFingerprints,
+      pool: options.connectionPool,
+    });
+    options.onConnected?.({
+      sftpSessionId,
+      hostId,
+      connectionOptions: connectOptions,
+    });
+    return { sftpSessionId };
+  };
+
+  const handleDisconnect = async (
+    _event: IpcMainInvokeEvent,
+    rawRequest: unknown
+  ) => {
+    const request = sftpDisconnectRequestSchema.parse(rawRequest);
+    options.onSessionClosed(request.sftpSessionId);
+    sftpSessionManager.disconnect(request.sftpSessionId);
+  };
+
+  const handleList = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpListRequestSchema.parse(rawRequest);
+    const transport = sftpSessionManager.getTransport(request.sftpSessionId);
+    return { entries: await transport.list(request.path) };
+  };
+
+  const handleStat = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpStatRequestSchema.parse(rawRequest);
+    return sftpSessionManager.getTransport(request.sftpSessionId).stat(request.path);
+  };
+
+  const handleChmod = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpChmodRequestSchema.parse(rawRequest);
+    await sftpSessionManager
+      .getTransport(request.sftpSessionId)
+      .chmod(request.path, request.permissions);
+  };
+
+  const handleMkdir = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpMkdirRequestSchema.parse(rawRequest);
+    await sftpSessionManager.getTransport(request.sftpSessionId).mkdir(request.path);
+  };
+
+  const handleRename = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpRenameRequestSchema.parse(rawRequest);
+    await sftpSessionManager.getTransport(request.sftpSessionId).rename(request.oldPath, request.newPath);
+  };
+
+  const handleCopy = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpCopyRequestSchema.parse(rawRequest);
+    const transport = sftpSessionManager.getTransport(request.sftpSessionId);
+    const targetEntries = await transport.list(request.targetDirectory);
+    const existingNames = new Set(targetEntries.map((entry) => entry.name));
+
+    for (const sourcePath of request.paths) {
+      const name = path.posix.basename(sourcePath.replace(/\\\\/g, "/"));
+      if (existingNames.has(name)) throw new Error(`A file or folder named ${name} already exists in the destination`);
+      await copyRemotePath(transport, sourcePath, path.posix.join(request.targetDirectory, name));
+      existingNames.add(name);
+    }
+  };
+
+  const handleDelete = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpDeleteRequestSchema.parse(rawRequest);
+    await sftpSessionManager.getTransport(request.sftpSessionId).remove(request.path, request.recursive);
+  };
+
+  const handleDeleteWithBackup = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpDeleteWithBackupRequestSchema.parse(rawRequest);
+    const normalizedPaths = request.paths.map((remotePath) => path.posix.normalize(remotePath));
+    if (normalizedPaths.some((remotePath) => remotePath === "/" || remotePath === ".")) {
+      throw new Error("Refusing to delete the remote root directory");
+    }
+    if (new Set(request.paths).size !== request.paths.length) {
+      throw new Error("Duplicate paths are not allowed in a delete request");
+    }
+    const session = sftpSessionManager.getSession(request.sftpSessionId);
+    if (!session) throw new Error("SFTP session is unavailable");
+
+    const backupId = randomUUID();
+    const backupDir = path.join(deleteBackupRoot, backupId);
+    const contentsDir = path.join(backupDir, "contents");
+    const createdAt = Date.now();
+    const expiresAt = createdAt + DELETE_BACKUP_RETENTION_MS;
+    const items: Array<{ remotePath: string; localName: string; isDirectory: boolean }> = [];
+
+    try {
+      await fs.promises.mkdir(contentsDir, { recursive: true });
+      for (const [index, remotePath] of request.paths.entries()) {
+        const stat = await session.transport.stat(remotePath);
+        const fileName = path.posix.basename(remotePath.replace(/\\/g, "/"));
+        const localName = `${String(index + 1).padStart(4, "0")}-${fileName || "item"}`;
+        const localPath = resolveSafeDragOutPath(contentsDir, localName);
+        if (stat.isDirectory) {
+          await stageRemoteDirectory(session.transport, remotePath, localPath);
+        } else {
+          await stageRemoteFile(session.transport, remotePath, localPath);
+        }
+        items.push({ remotePath, localName, isDirectory: Boolean(stat.isDirectory) });
+      }
+
+      await createZipFromDirectory(contentsDir, path.join(backupDir, "backup.zip"), "deleted-items");
+      await fs.promises.writeFile(path.join(backupDir, "backup.json"), JSON.stringify({
+        backupId,
+        hostId: session.hostId,
+        createdAt,
+        expiresAt,
+        items
+      }), "utf8");
+    } catch (error) {
+      await fs.promises.rm(backupDir, { recursive: true, force: true });
+      throw error;
+    }
+
+    const deletedPaths: string[] = [];
+    const failedPaths: string[] = [];
+    for (const remotePath of request.paths) {
+      try {
+        await session.transport.remove(remotePath, true);
+        deletedPaths.push(remotePath);
+      } catch {
+        failedPaths.push(remotePath);
+      }
+    }
+
+    return {
+      backupId,
+      archivePath: path.join(backupDir, "backup.zip"),
+      expiresAt,
+      deletedPaths,
+      failedPaths
+    };
+  };
+
+  const handleRestoreDeleteBackup = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpRestoreDeleteBackupRequestSchema.parse(rawRequest);
+    const session = sftpSessionManager.getSession(request.sftpSessionId);
+    if (!session) throw new Error("SFTP session is unavailable");
+    if (!/^[a-f0-9-]{36}$/i.test(request.backupId)) throw new Error("Invalid backup identifier");
+
+    const backupDir = path.join(deleteBackupRoot, request.backupId);
+    const metadata = JSON.parse(await fs.promises.readFile(path.join(backupDir, "backup.json"), "utf8")) as {
+      hostId: string;
+      expiresAt: number;
+      items: Array<{ remotePath: string; localName: string; isDirectory: boolean }>;
+    };
+    if (metadata.hostId !== session.hostId) throw new Error("Backup belongs to another host");
+    if (metadata.expiresAt <= Date.now()) throw new Error("Delete backup has expired");
+
+    const itemsByPath = new Map(metadata.items.map((item) => [item.remotePath, item]));
+    const operations = request.paths.map((remotePath) => {
+      const item = itemsByPath.get(remotePath);
+      if (!item) throw new Error(`Path is not included in this backup: ${remotePath}`);
+      return {
+        type: "upload" as const,
+        localPath: resolveSafeDragOutPath(path.join(backupDir, "contents"), item.localName),
+        remotePath: item.remotePath,
+        isDirectory: item.isDirectory
+      };
+    });
+
+    return transferManager.enqueue(
+      request.sftpSessionId,
+      session.transport,
+      operations,
+      undefined,
+      session.connectionOptions,
+      1
+    );
+  };
+
+  const handleOperationLogsList = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpOperationLogsListRequestSchema.parse(rawRequest);
+    return { logs: operationLogsRepo.list(request.hostId) };
+  };
+
+  const handleOperationLogAppend = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpOperationLogAppendRequestSchema.parse(rawRequest);
+    operationLogsRepo.append({ hostId: request.hostId, ...request.log });
+  };
+
+  const handleOperationLogsClear = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpOperationLogsClearRequestSchema.parse(rawRequest);
+    operationLogsRepo.clear(request.hostId);
+  };
+
+  const handleReadFile = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpReadFileRequestSchema.parse(rawRequest);
+    const transport = sftpSessionManager.getTransport(request.sftpSessionId);
+    const version = await readVersionToken(transport, request.path);
+    const buffer = await transport.readFile(request.path);
+    const normalized = normalizeFileContent(buffer);
+
+    return {
+      ...normalized,
+      size: version.size,
+      modifiedAt: version.modifiedAt
+    };
+  };
+
+  const handleWriteFile = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpWriteFileRequestSchema.parse(rawRequest);
+    const transport = sftpSessionManager.getTransport(request.sftpSessionId);
+
+    // Stat-then-write is inherently TOCTOU: SFTP has no atomic compare-and-swap,
+    // so a change landing between this stat and the writeFile call below is not
+    // caught — the previous task's atomic writeFile (temp + rename) widens that
+    // window from a single syscall to the whole upload duration. Accepted: the
+    // alternative (locking) isn't available over SFTP either.
+    if (request.expectedSize != null && request.expectedModifiedAt != null) {
+      const current = await transport.stat(request.path);
+      if (isVersionMismatch(current, { size: request.expectedSize, modifiedAt: request.expectedModifiedAt })) {
+        return {
+          status: "conflict" as const,
+          size: current.size,
+          modifiedAt: current.modifiedAt
+        };
+      }
+    }
+
+    const content = request.encoding === "base64"
+      ? Buffer.from(request.content, "base64")
+      : Buffer.from(request.content, "utf8");
+    await transport.writeFile(request.path, content);
+    const written = await transport.stat(request.path);
+
+    return {
+      status: "written" as const,
+      size: written.size,
+      modifiedAt: written.modifiedAt
+    };
+  };
+
+  const handleTransferStart = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpTransferStartRequestSchema.parse(rawRequest);
+    const transport = sftpSessionManager.getTransport(request.sftpSessionId);
+    const session = sftpSessionManager.getSession(request.sftpSessionId);
+    return transferManager.enqueue(
+      request.sftpSessionId,
+      transport,
+      request.operations,
+      undefined,
+      session?.connectionOptions ?? null,
+      request.chunkConcurrency
+    );
+  };
+
+  const handleTransferCancel = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpTransferCancelRequestSchema.parse(rawRequest);
+    transferManager.cancel(request.transferId);
+  };
+
+  const handleTransferPause = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request: SftpTransferPauseRequest = sftpTransferPauseRequestSchema.parse(rawRequest);
+    transferManager.pause(request.transferId);
+  };
+
+  const handleTransferResume = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request: SftpTransferResumeRequest = sftpTransferResumeRequestSchema.parse(rawRequest);
+    transferManager.resume(request.transferId);
+  };
+
+  const handleTransferRetry = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpTransferRetryRequestSchema.parse(rawRequest);
+    const entries = manifest.load();
+    const entry = entries.find((e) => e.transferId === request.transferId);
+    if (!entry) {
+      throw new Error(`No persisted transfer found for ${request.transferId}`);
+    }
+
+    const transport = sftpSessionManager.getTransport(entry.sftpSessionId);
+    manifest.remove(entry.transferId);
+
+    const job = transferManager.enqueueResume(entry.sftpSessionId, transport, {
+      transferId: entry.transferId,
+      type: entry.type,
+      localPath: entry.localPath,
+      remotePath: entry.remotePath,
+      bytesTransferred: entry.bytesTransferred,
+      totalBytes: entry.totalBytes,
+      batchId: entry.batchId,
+    });
+
+    return job;
+  };
+
+  const handleTransferList = async () => {
+    return { transfers: transferManager.list() };
+  };
+
+  const handleTransferResolveConflict = async (
+    _event: IpcMainInvokeEvent,
+    rawRequest: unknown
+  ) => {
+    const request = sftpTransferResolveConflictRequestSchema.parse(rawRequest);
+    transferManager.resolveConflict(
+      request.transferId,
+      request.resolution,
+      request.applyToAll
+    );
+  };
+
+  const handleBookmarksList = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpBookmarkListRequestSchema.parse(rawRequest);
+    return bookmarksRepo.list(request.hostId);
+  };
+
+  const handleBookmarksUpsert = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpBookmarkUpsertRequestSchema.parse(rawRequest);
+    if (!hostsRepo.get(request.hostId)) {
+      throw new Error(`Host ${request.hostId} not found — cannot create bookmark for unknown host`);
+    }
+
+    return bookmarksRepo.upsert(request);
+  };
+
+  const handleBookmarksRemove = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpBookmarkRemoveRequestSchema.parse(rawRequest);
+    bookmarksRepo.remove(request.id);
+  };
+
+  const handleBookmarksReorder = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpBookmarkReorderRequestSchema.parse(rawRequest);
+    bookmarksRepo.reorder(request.bookmarkIds);
+  };
+
+  const syncEngine = createSyncEngine();
+
+  const handleSyncStart = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpSyncStartRequestSchema.parse(rawRequest);
+    const transport = sftpSessionManager.getTransport(request.sftpSessionId);
+    const syncId = syncEngine.start(transport, {
+      localPath: request.localPath,
+      remotePath: request.remotePath,
+      direction: request.direction,
+      excludePatterns: request.excludePatterns,
+      deleteOrphans: request.deleteOrphans,
+    });
+    // Run sync in background — events emitted via syncEvent channel
+    void syncEngine.runOnce(syncId);
+    return { syncId };
+  };
+
+  const handleSyncStop = async (_event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpSyncStopRequestSchema.parse(rawRequest);
+    syncEngine.stop(request.syncId);
+  };
+
+  const handleSyncList = async () => {
+    return { syncs: syncEngine.list() };
+  };
+
+  const scheduleDragOutCleanup = (cacheKey: string, tempPath: string, isDirectory?: boolean) => {
+    const pathsToCleanup = [tempPath];
+    if (isDirectory && tempPath.endsWith(".zip")) {
+      pathsToCleanup.push(tempPath.slice(0, -".zip".length));
+    }
+
+    setTimeout(() => {
+      for (const pathToCleanup of pathsToCleanup) {
+        try {
+          fs.rmSync(pathToCleanup, { recursive: true, force: true });
+        } catch {
+          // best-effort; leave for startup prune
+        }
+      }
+      if (dragCache.get(cacheKey) === tempPath) {
+        dragCache.delete(cacheKey);
+      }
+    }, DRAG_OUT_POST_DRAG_DELAY_MS).unref();
+  };
+
+  const startNativeDragOutFromCache = async (
+    sender: IpcMainEvent["sender"],
+    request: { isDirectory?: boolean; prepareOnly?: boolean },
+    cacheKey: string
+  ): Promise<string> => {
+    const tempPath = dragCache.get(cacheKey);
+    const hadCachedTempPath = Boolean(tempPath && fs.existsSync(tempPath));
+    if (!tempPath || !shouldStartNativeDragOut(request, hadCachedTempPath)) {
+      return "";
+    }
+
+    // Windows rejects startDrag with an empty/placeholder NativeImage. Ask
+    // the shell for the real icon of the staged file (e.g. the .zip icon) and
+    // fall back to the stub only if that fails.
+    let icon: Electron.NativeImage;
+    try {
+      icon = await app.getFileIcon(tempPath, { size: "small" });
+      if (icon.isEmpty()) throw new Error("empty icon");
+    } catch {
+      icon = createDragOutIcon();
+    }
+
+    sender.startDrag({ file: tempPath, icon });
+    scheduleDragOutCleanup(cacheKey, tempPath, request.isDirectory);
+    return tempPath;
+  };
+
+  const handleDragOut = async (event: IpcMainInvokeEvent, rawRequest: unknown) => {
+    const request = sftpDragOutRequestSchema.parse(rawRequest);
+
+    const cacheKey = `${request.sftpSessionId}:${request.remotePath}`;
+
+    // Check cache first — file may have been pre-downloaded on selection
+    let tempPath = dragCache.get(cacheKey);
+    const hadCachedTempPath = Boolean(tempPath && fs.existsSync(tempPath));
+
+    if (!hadCachedTempPath) {
+      const stageTask = stageDragOutItemOnce(cacheKey, request);
+
+      if (request.isDirectory && !request.prepareOnly) {
+        void stageTask.catch((error) => {
+          console.warn("[sftp] Failed to stage drag-out item", error);
+        });
+        return { tempPath: "" };
+      }
+
+      try {
+        tempPath = await stageTask;
+      } catch (error) {
+        console.warn("[sftp] Failed to stage drag-out item", error);
+        return { tempPath: "" };
+      }
+    }
+
+    // prepareOnly: just cache the file, don't initiate OS drag
+    if (request.prepareOnly) {
+      return { tempPath };
+    }
+
+    if (!tempPath || !shouldStartNativeDragOut(request, hadCachedTempPath)) {
+      return { tempPath: tempPath ?? "" };
+    }
+
+    await startNativeDragOutFromCache(event.sender, request, cacheKey);
+
+    return { tempPath };
+  };
+
+  const handleStartNativeDragOut = (event: IpcMainEvent, rawRequest: unknown) => {
+    const request = sftpDragOutRequestSchema.parse(rawRequest);
+    const cacheKey = `${request.sftpSessionId}:${request.remotePath}`;
+    void startNativeDragOutFromCache(event.sender, request, cacheKey).catch((error) => {
+      console.warn("[sftp] startNativeDragOut failed", error);
+    });
+  };
+
+  const handleKeyboardInteractiveResponse = async (
+    _event: IpcMainInvokeEvent,
+    rawRequest: unknown
+  ) => {
+    const request = keyboardInteractiveResponseSchema.parse(rawRequest);
+    const pending = pendingKbdInteractive.get(request.requestId);
+    if (!pending) {
+      console.warn("[sftp] Received keyboard-interactive response for unknown request:", request.requestId);
+      return;
+    }
+
+    clearTimeout(pending.timer);
+    pendingKbdInteractive.delete(request.requestId);
+    pending.resolve(request.responses);
+  };
+
+  ipcMain.handle(sftpIpcChannels.keyboardInteractiveResponse, handleKeyboardInteractiveResponse);
+  ipcMain.handle(sftpIpcChannels.connect, handleConnect);
+  ipcMain.handle(sftpIpcChannels.disconnect, handleDisconnect);
+  ipcMain.handle(sftpIpcChannels.list, handleList);
+  ipcMain.handle(sftpIpcChannels.stat, handleStat);
+  ipcMain.handle(sftpIpcChannels.chmod, handleChmod);
+  ipcMain.handle(sftpIpcChannels.mkdir, handleMkdir);
+  ipcMain.handle(sftpIpcChannels.rename, handleRename);
+  ipcMain.handle(sftpIpcChannels.copy, handleCopy);
+  ipcMain.handle(sftpIpcChannels.delete, handleDelete);
+  ipcMain.handle(sftpIpcChannels.deleteWithBackup, handleDeleteWithBackup);
+  ipcMain.handle(sftpIpcChannels.restoreDeleteBackup, handleRestoreDeleteBackup);
+  ipcMain.handle(sftpIpcChannels.operationLogsList, handleOperationLogsList);
+  ipcMain.handle(sftpIpcChannels.operationLogAppend, handleOperationLogAppend);
+  ipcMain.handle(sftpIpcChannels.operationLogsClear, handleOperationLogsClear);
+  ipcMain.handle(sftpIpcChannels.readFile, handleReadFile);
+  ipcMain.handle(sftpIpcChannels.writeFile, handleWriteFile);
+  ipcMain.handle(sftpIpcChannels.transferStart, handleTransferStart);
+  ipcMain.handle(sftpIpcChannels.transferCancel, handleTransferCancel);
+  ipcMain.handle(sftpIpcChannels.transferPause, handleTransferPause);
+  ipcMain.handle(sftpIpcChannels.transferResume, handleTransferResume);
+  ipcMain.handle(sftpIpcChannels.transferRetry, handleTransferRetry);
+  ipcMain.handle(sftpIpcChannels.transferList, handleTransferList);
+  ipcMain.handle(sftpIpcChannels.transferResolveConflict, handleTransferResolveConflict);
+  ipcMain.handle(sftpIpcChannels.bookmarksList, handleBookmarksList);
+  ipcMain.handle(sftpIpcChannels.bookmarksUpsert, handleBookmarksUpsert);
+  ipcMain.handle(sftpIpcChannels.bookmarksRemove, handleBookmarksRemove);
+  ipcMain.handle(sftpIpcChannels.bookmarksReorder, handleBookmarksReorder);
+  ipcMain.handle(sftpIpcChannels.syncStart, handleSyncStart);
+  ipcMain.handle(sftpIpcChannels.syncStop, handleSyncStop);
+  ipcMain.handle(sftpIpcChannels.syncList, handleSyncList);
+  ipcMain.handle(sftpIpcChannels.dragOut, handleDragOut);
+  ipcMain.on?.(sftpIpcChannels.startNativeDragOut, handleStartNativeDragOut);
+
+  const unsubscribeSyncEvents = syncEngine.onEvent((event) => {
+    options.emitSyncEvent?.(event);
+  });
+
+  const unsubscribeSftpSessionEvents = sftpSessionManager.onEvent((event) => {
+    if (event.type === "status") {
+      options.emitSftpEvent?.({
+        kind: "status",
+        sftpSessionId: event.sftpSessionId,
+        state: event.state
+      });
+      return;
+    }
+
+    if (event.type === "error") {
+      options.emitSftpEvent?.({
+        kind: "status",
+        sftpSessionId: event.sftpSessionId,
+        state: "failed"
+      });
+      return;
+    }
+
+    if (event.type === "exit") {
+      options.emitSftpEvent?.({
+        kind: "status",
+        sftpSessionId: event.sftpSessionId,
+        state: "disconnected"
+      });
+    }
+  });
+
+  const unsubscribeTransferEvents = transferManager.onEvent((event) => {
+    if (event.kind === "transfer-progress") {
+      options.emitSftpEvent?.({
+        kind: "transfer-progress",
+        transferId: event.transferId,
+        bytesTransferred: event.bytesTransferred,
+        totalBytes: event.totalBytes,
+        speed: event.speed,
+        status: normalizeTransferStatus(event.status)
+      });
+      return;
+    }
+
+    if (event.kind === "transfer-complete") {
+      if (event.status === "completed") {
+        manifest.remove(event.transferId);
+      } else if (event.status === "failed") {
+        const details = transferManager.getJobDetails(event.transferId);
+        if (details && details.status === "interrupted" && details.bytesTransferred > 0) {
+          manifest.save({
+            transferId: event.transferId,
+            type: details.type,
+            localPath: details.localPath,
+            remotePath: details.remotePath,
+            totalBytes: details.totalBytes,
+            bytesTransferred: details.bytesTransferred,
+            remoteMtime: new Date().toISOString(),
+            remoteSize: details.totalBytes,
+            sftpSessionId: details.sftpSessionId,
+            batchId: details.batchId,
+            interruptedAt: new Date().toISOString(),
+          });
+        }
+      }
+
+      options.emitSftpEvent?.({
+        kind: "transfer-complete",
+        sftpSessionId: event.sftpSessionId,
+        transferId: event.transferId,
+        status: event.status,
+        error: event.error
+      });
+      return;
+    }
+
+    options.emitSftpEvent?.({
+      kind: "transfer-conflict",
+      transferId: event.transferId,
+      remotePath: event.remotePath,
+      localPath: event.localPath
+    });
+  });
+
+  return () => {
+    clearInterval(backupPruneTimer);
+    unsubscribeSftpSessionEvents();
+    unsubscribeTransferEvents();
+    unsubscribeSyncEvents();
+    // Clean up any pending keyboard-interactive requests
+    for (const [, pending] of pendingKbdInteractive) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error("SFTP IPC shutdown"));
+    }
+    pendingKbdInteractive.clear();
+    sftpSessionManager.disconnectAll();
+    for (const channel of Object.values(sftpIpcChannels)) {
+      ipcMain.removeHandler?.(channel);
+    }
+    ipcMain.removeListener?.(sftpIpcChannels.startNativeDragOut, handleStartNativeDragOut);
+  };
+}

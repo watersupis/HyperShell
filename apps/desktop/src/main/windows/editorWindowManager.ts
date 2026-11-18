@@ -1,10 +1,11 @@
 import type { BrowserWindow } from "electron";
-import { ipcChannels } from "@hypershell/shared";
+import { ipcChannels, type EditorOpenRequest } from "@hypershell/shared";
 import { createEditorWindow } from "./createEditorWindow";
 
 interface ManagedEditorWindow {
   window: BrowserWindow;
-  sftpSessionId: string;
+  pluginId: string;
+  windowKey: string;
 }
 
 export class EditorWindowManager {
@@ -20,37 +21,46 @@ export class EditorWindowManager {
     this.rendererUrl = url;
   }
 
-  openEditor(sftpSessionId: string, remotePath: string): void {
+  openEditor(request: EditorOpenRequest): void {
     if (!this.parentWindow || this.parentWindow.isDestroyed()) {
       return;
     }
 
     const existing = this.editors.find(
-      (e) => e.sftpSessionId === sftpSessionId && !e.window.isDestroyed()
+      (editor) => editor.pluginId === request.pluginId &&
+        editor.windowKey === request.windowKey &&
+        !editor.window.isDestroyed()
     );
 
     if (existing) {
       existing.window.webContents.send(ipcChannels.editor.openFile, {
-        sftpSessionId,
-        remotePath,
+        pluginId: request.pluginId,
+        windowKey: request.windowKey,
+        payload: request.payload,
       });
       existing.window.focus();
       return;
     }
 
     const window = createEditorWindow({
-      sftpSessionId,
+      pluginId: request.pluginId,
+      pluginContext: request.context,
       parentWindow: this.parentWindow,
       rendererUrl: this.rendererUrl,
     });
 
-    const entry: ManagedEditorWindow = { window, sftpSessionId };
+    const entry: ManagedEditorWindow = {
+      window,
+      pluginId: request.pluginId,
+      windowKey: request.windowKey,
+    };
     this.editors.push(entry);
 
     window.webContents.once("did-finish-load", () => {
       window.webContents.send(ipcChannels.editor.openFile, {
-        sftpSessionId,
-        remotePath,
+        pluginId: request.pluginId,
+        windowKey: request.windowKey,
+        payload: request.payload,
       });
     });
 
@@ -59,11 +69,12 @@ export class EditorWindowManager {
     });
   }
 
-  notifySessionClosed(sftpSessionId: string): void {
+  notifyWindowContextClosed(pluginId: string, windowKey: string): void {
     for (const editor of this.editors) {
-      if (editor.sftpSessionId === sftpSessionId && !editor.window.isDestroyed()) {
+      if (editor.pluginId === pluginId && editor.windowKey === windowKey && !editor.window.isDestroyed()) {
         editor.window.webContents.send(ipcChannels.editor.sessionClosed, {
-          sftpSessionId,
+          pluginId,
+          windowKey,
         });
       }
     }

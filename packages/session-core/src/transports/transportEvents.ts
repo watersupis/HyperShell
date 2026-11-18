@@ -1,4 +1,4 @@
-export type SessionTransportKind = "ssh" | "serial" | "sftp" | "telnet" | "local";
+export type SessionTransportKind = "ssh" | "serial" | "telnet" | "local";
 
 export type SessionState =
   | "connecting"
@@ -84,29 +84,11 @@ export interface LocalConnectionOptions {
   envVars?: Record<string, string>;
   /**
    * A single line typed into the shell once it reaches its first prompt. Used
-   * to reattach a restored tab to the Claude conversation it was running; the
-   * command is built in the main process, never supplied by the renderer.
+   * to initialize a restored session after the shell becomes interactive; the
+   * command is prepared by the owning transport plugin, never supplied raw by
+   * the renderer.
    */
   startupCommand?: string;
-}
-
-export interface SftpConnectionOptions {
-  hostname: string;
-  port?: number;
-  username?: string;
-  authMethod: "password" | "key" | "agent";
-  password?: string;
-  privateKeyPath?: string;
-  /** Additional key paths to try if the primary key fails */
-  fallbackKeyPaths?: string[];
-  agentPath?: string;
-  passphrase?: string;
-  proxyJump?: string;
-  keepAliveSeconds?: number;
-}
-
-export interface SftpSecurityOptions {
-  trustedHostFingerprints?: string[];
 }
 
 export type OpenSessionRequest = {
@@ -117,7 +99,8 @@ export type OpenSessionRequest = {
   rows: number;
   sshOptions?: SshConnectionOptions;
   serialOptions?: SerialConnectionOptions;
-  sftpOptions?: SftpConnectionOptions;
   telnetOptions?: TelnetConnectionOptions;
   localOptions?: LocalConnectionOptions;
 };
+
+export type SessionTransportFactory = (request: OpenSessionRequest) => TransportHandle;

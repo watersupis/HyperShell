@@ -1,0 +1,17 @@
+{
+  "name": "@hypershell/builtin-quick-command-center",
+  "private": true,
+  "version": "0.3.1",
+  "type": "module",
+  "dependencies": {
+    "@babel/parser": "^7.29.7",
+    "@hypershell/db": "workspace:*",
+    "@hypershell/plugin-api": "workspace:*",
+    "@hypershell/session-core": "workspace:*",
+    "react": "^19.2.7",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17"
+  }
+}

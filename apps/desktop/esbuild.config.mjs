@@ -38,7 +38,7 @@ await Promise.all([
     ...common,
     format: "esm",
     banner: { js: banner },
-    entryPoints: ["src/main/main.ts"],
+    entryPoints: ["src/main/bootstrap/main.ts"],
     outfile: "dist/main/main.js",
   }),
   build({

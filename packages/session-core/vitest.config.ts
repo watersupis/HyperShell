@@ -6,6 +6,6 @@ import { defineConfig } from "vitest/config";
 // found" and the tests never run.
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts"]
+    include: ["tests/unit/**/*.test.ts"]
   }
 });

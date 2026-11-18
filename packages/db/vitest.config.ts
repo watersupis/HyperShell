@@ -4,6 +4,6 @@ import { defineConfig } from "vitest/config";
 // package's own `test` script resolves the root config and finds no projects.
 export default defineConfig({
   test: {
-    include: ["src/**/*.test.ts"]
+    include: ["tests/unit/**/*.test.ts"]
   }
 });

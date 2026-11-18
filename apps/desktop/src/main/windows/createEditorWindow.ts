@@ -4,13 +4,14 @@ import { resolveAppIconPath } from "./resolveAppIconPath";
 import { attachWindowSecurityGuards } from "./windowSecurity";
 
 export interface CreateEditorWindowOptions {
-  sftpSessionId: string;
+  pluginId: string;
+  pluginContext: Record<string, unknown>;
   parentWindow: BrowserWindow;
   rendererUrl: string;
 }
 
 export function createEditorWindow(options: CreateEditorWindowOptions): BrowserWindow {
-  const { sftpSessionId, parentWindow, rendererUrl } = options;
+  const { pluginId, pluginContext, parentWindow, rendererUrl } = options;
   const preloadPath = path.join(__dirname, "..", "preload", "index.cjs");
   const iconPath = resolveAppIconPath();
 
@@ -19,7 +20,7 @@ export function createEditorWindow(options: CreateEditorWindowOptions): BrowserW
     height: 700,
     minWidth: 600,
     minHeight: 400,
-    title: "HyperShell Editor",
+    title: "HyperShell",
     backgroundColor: "#07111f",
     parent: parentWindow,
     modal: false,
@@ -34,8 +35,9 @@ export function createEditorWindow(options: CreateEditorWindowOptions): BrowserW
 
   // Build editor URL — handle both file:// (production) and http:// (dev)
   const url = new URL(rendererUrl);
-  url.searchParams.set("window", "editor");
-  url.searchParams.set("sftpSessionId", sftpSessionId);
+  url.searchParams.set("window", "plugin");
+  url.searchParams.set("pluginId", pluginId);
+  url.searchParams.set("pluginContext", JSON.stringify(pluginContext));
   attachWindowSecurityGuards(win, rendererUrl);
   void win.loadURL(url.toString());
 

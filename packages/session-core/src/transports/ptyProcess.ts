@@ -53,9 +53,6 @@ export interface PtyProcessDeps {
   onData?: (data: string, pty: { write(data: string): void }) => void;
 }
 
-// node-pty is loaded via require() at runtime (provided by esbuild banner's createRequire)
-declare const require: (id: string) => unknown;
-
 /** Variables Electron injects that would change how tools behave inside a shell. */
 const STRIPPED_ENV_KEYS = new Set(["NODE_OPTIONS"]);
 
@@ -72,16 +69,6 @@ export function sanitizePtyEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return result;
 }
 
-export function getDefaultSpawnPty(): PtySpawn {
-  const loaded = require("node-pty") as { spawn?: PtySpawn };
-
-  if (!loaded.spawn) {
-    throw new Error("node-pty did not provide a spawn function");
-  }
-
-  return loaded.spawn;
-}
-
 function toErrorMessage(error: unknown): string {
   return toSharedErrorMessage(error, "Unknown PTY error");
 }
@@ -92,7 +79,7 @@ export function createPtyProcess(
   deps: PtyProcessDeps = {}
 ): TransportHandle {
   const listeners = new Set<(event: SessionTransportEvent) => void>();
-  const spawnPty = deps.spawnPty ?? getDefaultSpawnPty();
+  const spawnPty = deps.spawnPty;
   let pty: PtyProcessLike | null = null;
   let dataSubscription: DisposableLike | null = null;
   let exitSubscription: DisposableLike | null = null;
@@ -124,6 +111,9 @@ export function createPtyProcess(
   };
 
   try {
+    if (!spawnPty) {
+      throw new Error("PTY spawn capability is required");
+    }
     pty = spawnPty(config.command, config.args, {
       name: config.termName ?? "xterm-256color",
       cols: config.cols,

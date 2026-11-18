@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, screen } from "electron";
 import path from "node:path";
-import { getOrCreateSettingsRepo } from "../ipc/hostsIpc";
-import { sessionManager } from "../ipc/registerIpc";
+import { getOrCreateSettingsRepo } from "../platform/storage/hostsRepositoryService";
+import { sessionManager } from "../platform/process/sessionRuntime";
 import { resolveAppIconPath } from "./resolveAppIconPath";
 
 interface WindowState {
