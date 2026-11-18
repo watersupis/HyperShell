@@ -83,10 +83,18 @@ test("chevrons page an overflowing tab strip in both directions", async ({ page 
 
   // Paging all the way back to the start retires the left chevron. Each click
   // has to settle first: scrollBy is relative to the *animated* position, so
-  // clicking mid-animation pages less than a full width.
+  // clicking mid-animation pages less than a full width. Windows CI can take
+  // longer than a fixed short delay, so wait for the scroll position to settle.
   for (let i = 0; i < 10 && (await scrollLeftButton(page).count()); i++) {
+    const before = await scrollLeft(page);
     await scrollLeftButton(page).click();
-    await page.waitForTimeout(250);
+    await expect.poll(() => scrollLeft(page)).toBeLessThan(before);
+    await expect.poll(async () => {
+      await page.waitForTimeout(100);
+      const current = await scrollLeft(page);
+      await page.waitForTimeout(100);
+      return Math.abs((await scrollLeft(page)) - current);
+    }).toBe(0);
   }
   await expect.poll(() => scrollLeft(page)).toBe(0);
   await expect(scrollLeftButton(page)).toHaveCount(0);
