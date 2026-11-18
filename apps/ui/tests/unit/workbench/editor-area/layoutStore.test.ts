@@ -80,15 +80,17 @@ describe("layoutStore", () => {
   it("closes a pane", () => {
     const store = createLayoutStore();
     store.getState().splitPane("s1");
-    const secondPaneId = store.getState().panes[1]?.paneId!;
-    store.getState().closePane(secondPaneId);
+    const secondPane = store.getState().panes[1];
+    if (!secondPane) throw new Error("Expected split pane to exist");
+    store.getState().closePane(secondPane.paneId);
     expect(store.getState().panes).toHaveLength(1);
   });
 
   it("does not close the last pane", () => {
     const store = createLayoutStore();
-    const firstPaneId = store.getState().panes[0]?.paneId!;
-    store.getState().closePane(firstPaneId);
+    const firstPane = store.getState().panes[0];
+    if (!firstPane) throw new Error("Expected initial pane to exist");
+    store.getState().closePane(firstPane.paneId);
     expect(store.getState().panes).toHaveLength(1);
   });
 

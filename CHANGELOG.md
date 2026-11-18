@@ -10,6 +10,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/) and this 
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-18
+
+### 近期更新内容概览
+
+- **插件化架构**：整理桌面端核心职责，建立内置与外置插件的统一生命周期、权限和 UI 插槽机制；增加进程与端口管理、主机监控、广播快捷指令等外置插件。
+- **终端工作流**：完善多会话工作区、会话录制与文本日志设置，并改进终端标签和连接管理体验。
+- **文档与扩展开发**：新增中英文用户及开发者 Wiki，补充插件开发、接口、构建和测试说明。
+- **自动化交付**：增加 GitHub Actions 工作流，用于构建三平台应用、生成外置插件包和部署 Wiki。
+
 ### Fixed
 
 - **Overflowed tabs are reachable again** — past roughly seven tabs the tab strip scrolls, but its native scrollbar is hidden on purpose (it stole layout height and detached the active tab from the terminal below it), which left a mouse wheel gesture over the strip as the only way to reach a tab that had scrolled out of view. `‹` / `›` chevrons now appear at the strip's edges while it can scroll that way and page it by 80% of the visible width, and the active tab scrolls itself into view whenever it changes — so opening a tab or switching by keyboard no longer leaves the active tab clipped past the right edge.

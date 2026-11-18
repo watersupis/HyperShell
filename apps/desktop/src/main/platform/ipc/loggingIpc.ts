@@ -44,6 +44,7 @@ export function createSessionLogger(getDirectory: () => string = () => path.join
   const sessions = new Map<string, LogSession>();
 
   const buildFileName = (sessionName: string) => {
+    // eslint-disable-next-line no-control-regex -- control characters are invalid in file names
     const safeName = sessionName.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_").trim().replace(/[. ]+$/g, "") || "Terminal";
     const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
     return `${safeName}_${timestamp}.log`;

@@ -453,15 +453,19 @@ function TerminalSection() {
         </ControlSlot>
       </SettingRow>
       <SettingRow label={t("Text log folder")} description={textLogDirectory || t("Default: application data/logs")}>
-        <Button variant="outline" size="sm" onClick={async () => {
-          const selected = await getShell().fsShowOpenDialog({ title: t("Choose text log folder"), directory: true });
-          if (selected) void updateTerminal({ textLogDirectory: selected });
+        <Button variant="outline" size="sm" onClick={() => {
+          void (async () => {
+            const selected = await getShell().fsShowOpenDialog({ title: t("Choose text log folder"), directory: true });
+            if (selected) void updateTerminal({ textLogDirectory: selected });
+          })();
         }}>{t("Choose folder")}</Button>
       </SettingRow>
       <SettingRow label={t("Recording folder")} description={recordingDirectory || t("Default: application data/recordings")}>
-        <Button variant="outline" size="sm" onClick={async () => {
-          const selected = await getShell().fsShowOpenDialog({ title: t("Choose recording folder"), directory: true });
-          if (selected) void updateTerminal({ recordingDirectory: selected });
+        <Button variant="outline" size="sm" onClick={() => {
+          void (async () => {
+            const selected = await getShell().fsShowOpenDialog({ title: t("Choose recording folder"), directory: true });
+            if (selected) void updateTerminal({ recordingDirectory: selected });
+          })();
         }}>{t("Choose folder")}</Button>
       </SettingRow>
       <SectionLabel className="pt-4 pb-1">{t("Font")}</SectionLabel>

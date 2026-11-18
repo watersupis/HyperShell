@@ -39,6 +39,9 @@ export default tseslint.config(
       "**/release/**",
       "**/playwright-report/**",
       "**/test-results/**",
+      "**/.vitepress/cache/**",
+      "**/.vitepress/temp/**",
+      "**/.vitepress/.temp/**",
       "apps/ui/src/vite-env.d.ts",
       ".claude/**",
       "redesign/**",
@@ -168,6 +171,11 @@ export default tseslint.config(
   // Vitest specs: assertions and fixtures legitimately traffic in `any`.
   {
     files: ["**/*.test.ts", "**/*.test.tsx"],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: { ecmaFeatures: { jsx: true } },
+      globals: { ...globals.node, ...globals.browser },
+    },
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
       "@typescript-eslint/no-unsafe-assignment": "off",
