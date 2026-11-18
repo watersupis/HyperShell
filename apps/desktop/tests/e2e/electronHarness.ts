@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const desktopRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
+const desktopRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 const mainEntry = path.join(desktopRoot, "dist", "main", "main.js");
 
 // The `electron` package's main export is the path to the platform binary.

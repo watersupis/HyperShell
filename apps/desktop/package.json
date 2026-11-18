@@ -13,7 +13,7 @@
     "build": "tsc -p tsconfig.json --noEmit && node esbuild.config.mjs",
     "build:bundle": "pnpm --filter @hypershell/ui run build && pnpm run build && pnpm run sync:renderer",
     "sync:renderer": "node ../../.tools/desktop/sync-renderer-dist.mjs",
-    "rebuild:native": "electron-builder install-app-deps",
+    "rebuild:native": "electron-rebuild --force --module-dir .",
     "prepare:package": "pnpm run build:bundle",
     "icons:generate": "electron ./scripts/generate-app-icons.cjs",
     "package:win:dir": "pnpm run prepare:package && electron-builder --config electron-builder.yml --win nsis --dir --publish never",
@@ -46,8 +46,9 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/ssh2": "^1.15.5",
+    "@electron/rebuild": "4.1.0",
     "@playwright/test": "^1.61.1",
+    "@types/ssh2": "^1.15.5",
     "@types/yauzl": "2.10.3",
     "@types/yazl": "^3.3.1",
     "electron": "^39.8.10",

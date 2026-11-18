@@ -93,6 +93,9 @@ importers:
         specifier: ^3.25.76
         version: 3.25.76
     devDependencies:
+      '@electron/rebuild':
+        specifier: 4.1.0
+        version: 4.1.0
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
