@@ -11,10 +11,11 @@ import { scanRecentClaudeSessions, watchClaudeSessions } from "../../../main/cla
  * are platform behaviour (a recursive fs.watch, and Windows' backslash in the
  * reported path) that no amount of mocking would prove.
  *
- * `USERPROFILE` is redirected so the user's own conversations are neither read
- * nor written.
+ * The home-directory environment is redirected so the user's own conversations
+ * are neither read nor written on Windows or POSIX.
  */
-const REAL_HOME = process.env.USERPROFILE;
+const REAL_HOME = process.env.HOME;
+const REAL_USERPROFILE = process.env.USERPROFILE;
 const ID = "5f6a1b2c-3d4e-4f50-8a1b-2c3d4e5f6a7b";
 const OTHER_ID = "1a2b3c4d-5e6f-4071-8293-a4b5c6d7e8f9";
 
@@ -23,13 +24,15 @@ let projectDir = "";
 describe("Claude session store", () => {
   beforeAll(() => {
     const home = mkdtempSync(join(tmpdir(), "hypershell-claude-"));
+    process.env.HOME = home;
     process.env.USERPROFILE = home;
     projectDir = join(home, ".claude", "projects", "C--fake-repo");
     mkdirSync(projectDir, { recursive: true });
   });
 
   afterAll(() => {
-    process.env.USERPROFILE = REAL_HOME;
+    process.env.HOME = REAL_HOME;
+    process.env.USERPROFILE = REAL_USERPROFILE;
   });
 
   it("reports a conversation as it is written", async () => {

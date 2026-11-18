@@ -87,13 +87,13 @@ export function createPermissionGuardedHostApi(context: PluginContext, host: Plu
     },
     monitoring: { latest: (hostIds) => { requirePermission("monitoring.read"); return host.monitoring.latest(hostIds); } },
     systems: {
-      inspect: (sessionId, operation, target) => {
+      inspect: async (sessionId, operation, target) => {
         const permission = operation === "metrics" || operation === "disk-details" ? "monitoring.read"
           : operation === "terminate-process" ? "processes.terminate"
             : operation === "start-container" || operation === "stop-container" ? "docker.manage"
               : "processes.read";
         requirePermission(permission);
-        return host.systems.inspect(sessionId, operation, target);
+        return await host.systems.inspect(sessionId, operation, target);
       },
     },
   };

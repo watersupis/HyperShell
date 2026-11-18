@@ -1,5 +1,3 @@
-import { basename } from "node:path";
-
 /**
  * Builds the line typed into a restored local shell to reattach it to the
  * Claude Code conversation the tab was running when HyperShell last closed.
@@ -20,7 +18,7 @@ const UUID_PATTERN =
 type ShellFamily = "powershell" | "cmd" | "posix";
 
 export function detectShellFamily(executable: string): ShellFamily | null {
-  const name = basename(executable).toLowerCase().replace(/\.exe$/, "");
+  const name = executable.split(/[\\/]/).pop()?.toLowerCase().replace(/\.exe$/, "") ?? "";
 
   if (name === "powershell" || name === "pwsh") {
     return "powershell";

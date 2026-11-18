@@ -2,6 +2,11 @@ name: External Plugin Packages
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Optional existing release tag to attach packages to
+        required: false
+        type: string
   push:
     tags:
       - 'v*'
@@ -55,14 +60,15 @@ jobs:
         with:
           name: hypershell-external-plugins-${{ github.run_id }}
           path: plugins/external/*/.packages/*.hspkg
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 30
 
       - name: Attach plugin packages to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.release_tag || github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
