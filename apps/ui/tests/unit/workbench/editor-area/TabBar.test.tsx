@@ -5,7 +5,7 @@ import { TabBar } from "../../../../src/workbench/editor-area/TabBar";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("TabBar launcher placement", () => {
-  it("keeps the new-tab launcher after tabs inside the scrollable tab list", () => {
+  it("keeps the new-tab launcher outside the scrollable tab list", () => {
     vi.stubGlobal("ResizeObserver", class {
       observe() {}
       disconnect() {}
@@ -29,7 +29,7 @@ describe("TabBar launcher placement", () => {
 
     const launcher = screen.getByRole("button", { name: "New tab" });
     const actions = screen.getByRole("button", { name: "Workspace actions" });
-    expect(launcher.closest('[data-testid="tab-scroll-container"]')).not.toBeNull();
+    expect(launcher.closest('[data-testid="tab-scroll-container"]')).toBeNull();
     expect(actions.closest('[data-testid="tab-scroll-container"]')).toBeNull();
   });
 });
