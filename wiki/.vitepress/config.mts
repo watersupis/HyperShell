@@ -49,6 +49,7 @@ const enSidebar = [
 ]
 
 export default defineConfig({
+  base: '/HyperShell/',
   title: 'HyperShell Wiki',
   description: 'HyperShell user and developer guides',
   cleanUrls: true,
