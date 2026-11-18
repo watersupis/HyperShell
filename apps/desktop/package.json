@@ -17,7 +17,7 @@
     "prepare:package": "pnpm run build:bundle",
     "icons:generate": "electron ./scripts/generate-app-icons.cjs",
     "package:win:dir": "pnpm run prepare:package && electron-builder --config electron-builder.yml --win nsis --dir --publish never",
-    "package:win:unsigned": "pnpm run prepare:package && electron-builder --config electron-builder.yml --win nsis --x64 --publish never",
+    "package:win:unsigned": "pnpm run prepare:package && electron-builder --config electron-builder.yml --win --x64 --publish never",
     "package:mac:unsigned": "pnpm run prepare:package && electron-builder --config electron-builder.yml --mac --x64 --publish never",
     "package:linux:unsigned": "pnpm run prepare:package && electron-builder --config electron-builder.yml --linux --x64 --publish never",
     "release:manifest": "node ../../.tools/release/write-release-manifest.mjs --artifacts-dir release",

@@ -90,7 +90,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Attach Windows installer to GitHub release
+      - name: Attach Windows builds to GitHub release
         if: startsWith(github.ref, 'refs/tags/v') || inputs.release_tag != ''
         shell: bash
         env:
@@ -100,13 +100,14 @@ jobs:
           TAG="$RELEASE_TAG"
           gh release create "$TAG" --generate-notes --title "$TAG" || true
           cd apps/desktop/release
-          EXE=$(find . -maxdepth 1 -name '*.exe' | head -1)
-          if [ -z "$EXE" ]; then
-            echo "No installer found, skipping upload"
-            exit 0
+          INSTALLER=$(find . -maxdepth 1 -name 'hypershell-*-x64.exe' ! -name '*-portable.exe' | head -1)
+          PORTABLE=$(find . -maxdepth 1 -name 'hypershell-*-x64-portable.exe' | head -1)
+          if [ -z "$INSTALLER" ] || [ -z "$PORTABLE" ]; then
+            echo "Missing Windows installer or portable executable"
+            exit 1
           fi
-          echo "Uploading installer $EXE to release $TAG"
-          gh release upload "$TAG" "$EXE" --clobber
+          echo "Uploading Windows installer $INSTALLER and portable build $PORTABLE to release $TAG"
+          gh release upload "$TAG" "$INSTALLER" "$PORTABLE" --clobber
           # Upload auto-update metadata LAST so a polling client never sees
           # an advertised version before its installer asset exists.
           [ -f latest.yml ] && gh release upload "$TAG" latest.yml --clobber || true
