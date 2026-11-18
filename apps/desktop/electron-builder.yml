@@ -22,12 +22,7 @@ win:
     - target: nsis
       arch:
         - x64
-    - target: portable
-      arch:
-        - x64
   artifactName: hypershell-${version}-${arch}.${ext}
-portable:
-  artifactName: hypershell-${version}-${arch}-portable.${ext}
 nsis:
   oneClick: false
   perMachine: false

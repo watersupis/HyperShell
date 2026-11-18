@@ -79,6 +79,15 @@ jobs:
       - name: Package Windows release (unsigned)
         run: pnpm release:windows:unsigned
 
+      - name: Create Windows ZIP distribution
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          Compress-Archive `
+            -Path "apps/desktop/release/win-unpacked/*" `
+            -DestinationPath "apps/desktop/release/hypershell-$version-win-x64.zip" `
+            -CompressionLevel Optimal
+
       - name: Generate release manifest
         run: pnpm release:manifest
 
@@ -101,13 +110,13 @@ jobs:
           gh release create "$TAG" --generate-notes --title "$TAG" || true
           cd apps/desktop/release
           INSTALLER=$(find . -maxdepth 1 -name 'hypershell-*-x64.exe' ! -name '*-portable.exe' | head -1)
-          PORTABLE=$(find . -maxdepth 1 -name 'hypershell-*-x64-portable.exe' | head -1)
-          if [ -z "$INSTALLER" ] || [ -z "$PORTABLE" ]; then
-            echo "Missing Windows installer or portable executable"
+          ZIP=$(find . -maxdepth 1 -name 'hypershell-*-win-x64.zip' | head -1)
+          if [ -z "$INSTALLER" ] || [ -z "$ZIP" ]; then
+            echo "Missing Windows installer or ZIP distribution"
             exit 1
           fi
-          echo "Uploading Windows installer $INSTALLER and portable build $PORTABLE to release $TAG"
-          gh release upload "$TAG" "$INSTALLER" "$PORTABLE" --clobber
+          echo "Uploading Windows installer $INSTALLER and ZIP distribution $ZIP to release $TAG"
+          gh release upload "$TAG" "$INSTALLER" "$ZIP" --clobber
           # Upload auto-update metadata LAST so a polling client never sees
           # an advertised version before its installer asset exists.
           [ -f latest.yml ] && gh release upload "$TAG" latest.yml --clobber || true
